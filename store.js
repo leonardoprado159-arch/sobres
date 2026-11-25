@@ -11,7 +11,7 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID()
 // Lo que no se pudo mandar por falta de señal queda aquí y se sube solo, en orden, al volver la conexión.
 const CLAVE_COLA = 'whiplash-cola-v1';
 const leerCola = () => { try { return JSON.parse(localStorage.getItem(CLAVE_COLA)) || []; } catch { return []; } };
-const guardarCola = (c) => { try { localStorage.setItem(CLAVE_COLA, JSON.stringify(c)); } catch { /* sin espacio */ } };
+const guardarCola = (c) => { try { localStorage.setItem(CLAVE_COLA, JSON.stringify(c)); return true; } catch { return false; } };
 const sinRed = (err) => (typeof navigator !== 'undefined' && navigator.onLine === false)
   || /failed to fetch|load failed|networkerror|network request failed|fetch failed|la conexión/i.test(String(err?.message || err));
 
@@ -58,6 +58,7 @@ const backendDemo = {
   },
   async sincronizar() { return { subidos: 0, fallidos: 0 }; },
   pendientes() { return 0; },
+  atascado() { return false; },
   vaciarCola() {},
   alEncolar: null,
   urlFuncion: '', urlAvisos: '', async token() { return ''; },
@@ -84,7 +85,9 @@ function backendSupabase() {
     chk(await sb.from(o.tabla).delete().eq('id', o.id));
   };
   // Sube lo pendiente en orden. Se detiene si no hay señal, si no hay sesión válida o si el servidor falla
-  // por algo pasajero. Solo se descarta lo que el servidor rechaza de forma definitiva, o lo que falló 5 veces.
+  // por algo pasajero. Solo se descarta lo que el servidor rechaza de forma definitiva o lo que es de otra cuenta.
+  // Lo que falla muchas veces no se borra solo: queda "atascado" y la app le pregunta a la persona.
+  let uidActual = '';
   let subiendo = null;
   function sincronizar() {
     if (subiendo) return subiendo;
@@ -95,13 +98,16 @@ function backendSupabase() {
       if (c0.some(x => !x.k)) guardarCola(c0.map(x => (x.k ? x : { ...x, k: uid() })));
       const { data } = await sb.auth.getSession().catch(() => ({ data: {} }));
       if (!data?.session) return { subidos, fallidos };   // sin sesión no se manda: el servidor lo rechazaría todo
+      // lo que quedó pendiente de otra cuenta en este teléfono no se sube a esta
+      const mio = data.session.user.id, ajenos = leerCola().filter(x => x.u && x.u !== mio).length;
+      if (ajenos) { guardarCola(leerCola().filter(x => !x.u || x.u === mio)); fallidos += ajenos; }
       for (;;) {
         const o = leerCola()[0];
         if (!o) break;
         try { await mandar(o); subidos++; }
         catch (e) {
           if (sinRed(e)) break;
-          if (definitivo(e) || (o.n || 0) >= 4) fallidos++;
+          if (definitivo(e)) fallidos++;
           else { guardarCola(leerCola().map(x => (x.k === o.k ? { ...x, n: (x.n || 0) + 1 } : x))); break; }
         }
         guardarCola(leerCola().filter(x => x.k !== o.k));
@@ -118,20 +124,21 @@ function backendSupabase() {
     if (!leerCola().length) {
       try { return await mandar(o); } catch (e) { if (!sinRed(e)) throw e; }
     }
-    guardarCola([...leerCola(), { ...o, k: uid() }]);
+    // si el teléfono no tiene dónde guardarlo, se dice: no se da por guardado algo que se perdería
+    if (!guardarCola([...leerCola(), { ...o, k: uid(), u: uidActual }])) throw new Error('no hay señal y el teléfono no tiene espacio para guardarlo');
     try { backend.alEncolar && backend.alEncolar(); } catch { /* nada */ }
     return local();
   }
   const backend = {
     async sesion() {
       const { data } = await sb.auth.getSession().catch(() => ({ data: {} }));
-      if (data?.session?.user) return data.session.user;
+      if (data?.session?.user) { uidActual = data.session.user.id; return data.session.user; }
       // Sin señal no se puede renovar el permiso vencido, pero la sesión sigue guardada en el teléfono:
       // se entra con ella para poder ver lo último y anotar sin conexión. Si la sesión se cerró de verdad, ya no está guardada.
       try {
         const k = Object.keys(localStorage).find(x => /^sb-.+-auth-token$/.test(x));
         const u = k && JSON.parse(localStorage.getItem(k))?.user;
-        if (u?.id) return u;
+        if (u?.id) { uidActual = u.id; return u; }
       } catch { /* sin storage */ }
       return null;
     },
@@ -168,6 +175,7 @@ function backendSupabase() {
     },
     async borrar(tabla, id) { await conCola({ op: 'borrar', tabla, id }, () => undefined); },
     sincronizar, pendientes: () => leerCola().length, vaciarCola: () => guardarCola([]), alEncolar: null,
+    atascado: () => (leerCola()[0]?.n || 0) >= 5,   // el primero de la fila ya falló 5 veces por algo que no es la señal
     urlFuncion: CFG.url.replace(/\/$/, '') + '/functions/v1/registrar',
     urlAvisos: CFG.url.replace(/\/$/, '') + '/functions/v1/avisar',
     async token() { const { data } = await sb.auth.getSession(); return data.session?.access_token || ''; },

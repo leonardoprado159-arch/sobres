@@ -2,6 +2,8 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
+  <!-- Solo se ejecuta código de la propia app y de la librería fijada de jsDelivr: un texto que llegue de afuera no puede correr como código -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co https://api.hacienda.go.cr https://cdn.jsdelivr.net https://fonts.googleapis.com https://fonts.gstatic.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Whiplash</title>
   <meta name="theme-color" content="#ffffff">
@@ -28,17 +30,6 @@
   <div id="panel" hidden></div>
   <div id="hoja" hidden></div>
   <div id="toast" role="status" aria-live="polite"></div>
-  <script>
-    // supabase-js solo se carga si hay servidor configurado
-    (function () {
-      var c = window.SOBRES_CONFIG || {};
-      function arrancar() { var s = document.createElement('script'); s.type = 'module'; s.src = 'app.js'; document.body.appendChild(s); }
-      if (c.url && c.anonKey) {
-        var s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
-        s.onload = arrancar; document.head.appendChild(s);
-      } else arrancar();
-    })();
-  </script>
+  <script src="arranque.js"></script>
 </body>
 </html>

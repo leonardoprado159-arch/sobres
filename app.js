@@ -5,10 +5,10 @@ import { leerAviso, normalizarComercio } from './parser.js';
 // ================= utilidades =================
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-// Montos a la vista: coma para miles, punto para decimales y siempre dos decimales (₡785,000.00)
+// Montos a la vista: coma para miles y punto para decimales. Sin ceros de más: ₡750, ₡125,000; con céntimos, los dos: ₡42,222.22
 function fmt(n, moneda = 'CRC') {
-  const s = n < 0 ? '−' : '';
-  return s + (moneda === 'USD' ? '$' : '₡') + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const v = Math.round(Math.abs(Number(n) || 0) * 100) / 100, s = n < 0 && v > 0 ? '−' : '';
+  return s + (moneda === 'USD' ? '$' : '₡') + v.toLocaleString('en-US', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 });
 }
 const hoyLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -202,7 +202,7 @@ function filaGasto(g, conSobre = true) {
   const s = sobreDe(g.sobre_id), m = metodoDe(g.metodo_id);
   const f = new Date(g.fecha);
   const hora = f.toLocaleTimeString('es-CR', { hour: 'numeric', minute: '2-digit' });
-  const detalle = [hora, m ? m.nombre : FUENTES[g.fuente], conSobre ? (s ? s.nombre : '<em>Sin categoría</em>') : ''].filter(Boolean).join(' · ');
+  const detalle = [hora, m ? esc(m.nombre) : FUENTES[g.fuente], conSobre ? (s ? esc(s.nombre) : '<em>Sin categoría</em>') : ''].filter(Boolean).join(' · ');
   const otra = s && s.moneda !== g.moneda ? `<small>${fmt(conv(g.monto, g.moneda, s.moneda), s.moneda)}</small>` : '';
   return `<button class="fila" data-accion="editar-gasto" data-id="${g.id}">
     <span class="mini-ico">${ico(s ? s.icono : 'bandeja')}</span>
@@ -301,7 +301,7 @@ function filaMovU(m) {
     const sub = catIngDe(x.categoria_id)?.nombre || (x.fuente === 'fijo' ? 'Ingreso fijo' : x.fuente === 'manual' ? 'Ingreso' : 'SINPE recibido');
     return `<button class="movu" data-accion="editar-ingreso" data-id="${x.id}">
       <span class="tile ing">${ico('monedas')}</span>
-      <span class="txt"><b>${esc(x.origen || 'Ingreso')}</b><small>${sub}</small></span>
+      <span class="txt"><b>${esc(x.origen || 'Ingreso')}</b><small>${esc(sub)}</small></span>
       <span class="monto bien">+${fmt(x.monto, x.moneda)}</span></button>`;
   }
   const s = sobreDe(x.sobre_id) || S.archivadas.find(a => a.id === x.sobre_id);
@@ -1108,9 +1108,10 @@ function hojaPersonalizar() {
 // ================= configuración de categorías: colores, grupos y archivo =================
 const COLORES_CAT = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
 const nombreGrupo = (s) => (s.grupo || '').trim() || 'Sin grupo';
-const colorGrupo = (g) => { const k = (S.cfg.grupos || {})[g]; return k ? `var(--${k})` : null; };
+const tok = (x) => String(x || '').replace(/[^a-z0-9-]/gi, '');   // un color guardado solo puede ser el nombre de un color de la app
+const colorGrupo = (g) => { const k = tok((S.cfg.grupos || {})[g]); return k ? `var(--${k})` : null; };
 // color elegido para la categoría; si no tiene, el de su grupo
-const colorFijo = (s) => (!s ? null : s.color ? `var(--${s.color})` : colorGrupo(nombreGrupo(s)));
+const colorFijo = (s) => (!s ? null : tok(s.color) ? `var(--${tok(s.color)})` : colorGrupo(nombreGrupo(s)));
 const estiloTile = (s) => { const c = colorFijo(s); return c ? ` style="color:${c};background:color-mix(in srgb, ${c} 14%, var(--fondo))"` : ''; };
 const usosCat = (s) => (s.tipo === 'ingreso' ? S.ingresos.filter(i => i.categoria_id === s.id).length : S.gastos.filter(g => g.sobre_id === s.id).length);
 const catsDeTab = () => ((S.catTab || 'gasto') === 'ingreso' ? S.catsIng : S.sobres);
@@ -1245,7 +1246,7 @@ function vistaSobres() {
   const pendientes = S.gastos.filter(g => porClasificar(g) && new Date(g.fecha) >= c.ini).length;
   return `${cab}
   <div class="destacada">
-    <div class="lado"><small>Gastado este mes</small><b>${fmt(gastado, mv)}</b></div>
+    <div class="lado"><small>${balance(c).porPagar > 0 ? 'Gastado y por pagar este mes' : 'Gastado este mes'}</small><b>${fmt(gastado, mv)}</b></div>
     <div class="lado der"><small>${presup > 0 ? 'Límites del mes' : 'Cierra en'}</small><b style="font-size:19px">${presup > 0 ? fmt(presup, mv) : diasParaCierre() + ' días'}</b></div>
   </div>
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre">
@@ -1408,7 +1409,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 20`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 21`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1650,7 +1651,9 @@ function datosAtajo() {
   return `<div class="campos">
     <div class="campo"><span>Dirección</span>${url ? `<code>${esc(url)}</code><button class="boton-txt" data-accion="copiar" data-texto="${esc(url)}" aria-label="Copiar dirección">${ico('copiar')}</button>` : '<span class="pendiente">Al publicar la app</span>'}</div>
     <div class="campo"><span>Token</span><code>${esc(S.cfg.token_atajos.slice(0, 6))}••••••</code><button class="boton-txt" data-accion="copiar" data-texto="${esc(S.cfg.token_atajos)}">${ico('copiar')} Copiar</button></div>
-  </div><p class="nota">No compartás el token: con él se pueden registrar gastos en tu cuenta.</p>`;
+  </div><p class="nota">No compartás el token: con él se pueden registrar gastos en tu cuenta. Si creés que alguien más lo tiene, cambialo: el anterior deja de servir y hay que pegar el nuevo en cada atajo.</p>
+  ${modoDemo ? '' : `<div class="acciones" style="margin:0 0 6px"><button class="btn chico gris" data-accion="rotar-token">${ico('escudo')} Cambiar el token</button></div>`}
+  <p class="nota">Si pagás sin señal, el atajo no llega al servidor y ese gasto no se anota: no hay reintento. Sabés que entró porque llega el aviso de "Gasto registrado"; si no llegó, agregalo a mano o importá el estado de cuenta.</p>`;
 }
 
 function vistaAvisos() {
@@ -1691,7 +1694,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 20</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 21</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -2269,6 +2272,7 @@ async function cargarXLSX(aviso = 'Preparando Excel…') {
   await new Promise((ok, mal) => {
     const sc = document.createElement('script');
     sc.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    sc.integrity = 'sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw'; sc.crossOrigin = 'anonymous';
     sc.onload = ok; sc.onerror = () => mal(new Error('no se pudo cargar el lector de Excel (¿sin internet?)'));
     document.head.appendChild(sc);
   });
@@ -2607,6 +2611,14 @@ async function accion(el) {
     case 'sobrante-ahorro': hojaPasarAhorro(sobreDe(id)); break;
     case 'excel': await descargarExcel(); break;
     case 'imp-agregar': await agregarImportados(); break;
+    case 'rotar-token': {
+      if (!confirm('Se crea un token nuevo y el actual deja de funcionar de inmediato. Vas a tener que pegar el nuevo en el atajo de Apple Pay y en cualquier otro. ¿Cambiarlo?')) return;
+      const nuevo = [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join('');
+      await guardarCfg({ token_atajos: nuevo }); render(); toast('Token cambiado: copialo y pegalo en tus atajos', 5000); break;
+    }
+    case 'descartar-cola':
+      if (!confirm(`Se descartan ${api.pendientes()} cambios que no se han podido subir. No se pueden recuperar. ¿Descartarlos?`)) return;
+      api.vaciarCola(); ultimaCarga = 0; await refrescar(); render(); toast('Cambios descartados'); break;
     case 'respaldar-ya': { const d = await llamarAvisos({ accion: 'respaldar' }); toast(d.ok ? `Respaldo guardado · ${d.filas} registros` : 'No se pudo: ' + (d.motivo || 'error'), 4000); S.resp = null; render(); break; }
     case 'guia-cats': await agregarSugeridas('gasto'); break;
     case 'guia-ocultar': guiaGuardar({ oculta: true }); render(); toast('Los encontrás otra vez en Configuración → Primeros pasos', 4000); break;
@@ -2813,7 +2825,8 @@ async function activarBloqueo() {
     pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
     authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
     timeout: 60000, attestation: 'none' } });
-  localStorage.setItem(CLAVE_BLOQ, JSON.stringify({ id: aB64(cred.rawId) }));
+  try { localStorage.setItem(CLAVE_BLOQ, JSON.stringify({ id: aB64(cred.rawId) })); }
+  catch { throw new Error('Este dispositivo no ofrece dónde guardar el bloqueo (¿navegación privada?)'); }
 }
 async function pedirBiometria() {
   const b = leerBloq();
@@ -2959,7 +2972,8 @@ async function activarAvisos() {
   const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: deB64Url(clave) });
   const d = await llamarAvisos({ accion: 'suscribir', sub: sub.toJSON() });
   if (!d.ok) throw new Error(d.motivo || 'no se pudo guardar la suscripción');
-  localStorage.setItem(CLAVE_PUSH, sub.endpoint);
+  try { localStorage.setItem(CLAVE_PUSH, sub.endpoint); }
+  catch { await llamarAvisos({ accion: 'quitar', endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe().catch(() => {}); throw new Error('El teléfono no dejó guardar el ajuste; los avisos no quedaron activos'); }
 }
 async function quitarAvisos() {
   const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription();
@@ -3037,15 +3051,20 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) refr
 // Sin señal: el cambio queda en el teléfono y se sube solo al volver la conexión
 let relojCola = null;
 api.alEncolar = () => { clearTimeout(relojCola); relojCola = setTimeout(() => { toast('Sin conexión: quedó guardado en el teléfono y se sube solo', 4000); if (!ocupadoAhora()) render(); }, 2500); };
-window.addEventListener('online', () => { ultimaCarga = 0; refrescar(); });
+window.addEventListener('online', () => { ultimaCarga = 0; if (S.usuario && !S.cfg) iniciar(); else refrescar(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.usuario && !S.cfg) iniciar(); });
 function bloqueCola() {
   const n = api.pendientes();
-  return n ? `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'historial', 44)}
-    <span class="nombre">${n} ${n === 1 ? 'cambio por subir' : 'cambios por subir'}<small>Guardados en el teléfono. Se suben solos al volver la señal.</small></span></div>` : '';
+  if (!n) return '';
+  if (api.atascado()) return `<div class="item alerta pasada" style="margin-top:12px">${anillo(1, 'excedido', 'historial', 44)}
+    <span class="nombre">${n} ${n === 1 ? 'cambio no se ha podido subir' : 'cambios no se han podido subir'}<small>El servidor los está rechazando. Mientras tanto la app no trae datos nuevos.</small></span>
+    <button class="btn chico" data-accion="descartar-cola">Descartar</button></div>`;
+  return `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'historial', 44)}
+    <span class="nombre">${n} ${n === 1 ? 'cambio por subir' : 'cambios por subir'}<small>Guardados en el teléfono. Se suben solos al volver la señal.</small></span></div>`;
 }
 
 // ---------- versión nueva: se aplica sola ----------
-const NUCLEO = ['./', 'app.js', 'styles.css', 'store.js', 'iconos.js', 'parser.js', 'config.js'];
+const NUCLEO = ['./', 'arranque.js', 'app.js', 'styles.css', 'store.js', 'iconos.js', 'parser.js', 'config.js'];
 let hayNueva = false, relojNueva = null;
 function ocupadoAhora() {
   const a = document.activeElement;

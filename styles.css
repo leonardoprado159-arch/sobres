@@ -9,7 +9,7 @@
   --linea: #e2e2e2;
   --bien: #138a3c;       /* montos disponibles */
   --mal: #d0201a;        /* excedidos */
-  --aviso: #b26a00;
+  --aviso: #955600;
   --acento: #7ee8a3;     /* botón y destacados */
   --acento-suave: #e2f8e9;
   --acento-tinta: #0d0d0d;
@@ -605,7 +605,7 @@ button.est-fila { width: 100%; text-align: left; }
 .btn-grupo { width: 100%; text-align: left; }
 .btn-grupo span { flex: 1; }
 .btn-grupo .i { width: 15px; height: 15px; color: var(--tenue); }
-.movu .cuenta { color: var(--tenue); font-weight: 500; }
+.movu .cuenta { color: var(--suave); font-weight: 500; }
 .movu > .fin { color: var(--tenue); width: 18px; height: 18px; }
 .movu .btn.chico { background: var(--fondo); }
 .top .redondo + .redondo { margin-left: -4px; }
@@ -670,7 +670,7 @@ button, a, label, select { touch-action: manipulation; }
 .mini-cuenta .mc-top span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mini-cuenta b { font-size: 18px; font-weight: 700; white-space: nowrap; margin-top: 4px; }
 .mini-cuenta b.mal { color: var(--mal); }
-.mini-cuenta small { color: var(--tenue); font-size: 13px; }
+.mini-cuenta small { color: var(--suave); font-size: 13px; }
 .mini-cuenta.nueva { flex: 0 0 96px; align-items: center; justify-content: center; background: transparent; border: 1.5px dashed var(--linea); color: var(--suave); }
 .mini-cuenta.nueva .i { width: 22px; height: 22px; }
 .mini-cuenta.nueva small { color: var(--suave); }
@@ -732,3 +732,7 @@ button, a, label, select { touch-action: manipulation; }
 .bienvenida li .i { width: 22px; height: 22px; flex: none; color: var(--bien); }
 @media (prefers-reduced-motion: reduce) { .guia-barra span, .guia .guia-num { animation: none !important; } }
 a.movu { text-decoration: none; color: inherit; }
+
+/* ---------- zona de toque más grande en los enlaces y botones chicos (no cambia cómo se ven) ---------- */
+.cab-mov .enlace, .chip-moneda, .enlace.sin-raya, .enlace.centro, #hoja .panel-top .redondo { position: relative; }
+.cab-mov .enlace::after, .chip-moneda::after, .enlace.sin-raya::after, .enlace.centro::after, #hoja .panel-top .redondo::after { content: ''; position: absolute; inset: -12px -8px; }
