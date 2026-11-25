@@ -358,7 +358,7 @@ function vistaInicio() {
     </div>
   </section>
   ${seguro}
-  ${bloqueCuentas()}${bloqueResumen()}${bloqueAlertas()}
+  ${bloqueCuentas()}${bloquePagos()}${bloqueResumen()}${bloqueAlertas()}
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre" style="margin-top:12px">
       ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin categoría' : 'gastos sin categoría'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
   ${prox.map(({ s, d }) => `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'calendario', 44)}
@@ -452,6 +452,48 @@ function textoSaldo(c) {
   return { t: (n < 0 ? '−' : '') + fmt(Math.abs(n), mon), sub: '', cls: n < 0 ? 'mal' : '' };
 }
 
+// ---------- corte y pago de la tarjeta de crédito ----------
+const diaEnMes = (a, m, d) => new Date(a, m, Math.min(d, new Date(a, m + 1, 0).getDate()));
+const diaMes = (d) => `${d.getDate()} ${MESES[d.getMonth()]}`;
+// Lo que hay que pagar del último corte = la deuda de hoy menos lo comprado después de ese corte.
+function estadoTarjeta(c) {
+  const m = c.m, dc = Number(m.dia_corte) || 0, dp = Number(m.dia_pago) || 0;
+  if (!esCredito(m) || !dc) return null;
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  let corte = diaEnMes(hoy.getFullYear(), hoy.getMonth(), dc);
+  if (corte > hoy) corte = diaEnMes(hoy.getFullYear(), hoy.getMonth() - 1, dc);
+  const tras = new Date(corte.getFullYear(), corte.getMonth(), corte.getDate() + 1);   // lo del día de corte entra en ese corte
+  const prox = diaEnMes(corte.getFullYear(), corte.getMonth() + 1, dc);
+  const mon = m.moneda || 'CRC';
+  const nuevas = S.gastos.filter(g => g.metodo_id === m.id && (g.estado || 'pagado') === 'pagado' && new Date(g.fecha) >= tras && Date.parse(g.fecha) >= c.desde)
+    .reduce((a, g) => a + conv(g.monto, g.moneda, mon), 0);
+  const porPagar = Math.max(0, Math.round((Math.max(0, -c.saldo) - nuevas) * 100) / 100);
+  let pago = null, dias = null;
+  if (dp) {
+    pago = diaEnMes(corte.getFullYear(), corte.getMonth(), dp);
+    if (pago <= corte) pago = diaEnMes(corte.getFullYear(), corte.getMonth() + 1, dp);
+    dias = Math.round((pago - hoy) / 864e5);
+  }
+  return { corte, prox, nuevas, porPagar, pago, dias, mon };
+}
+function textoCorte(e) {
+  if (e.porPagar > 0 && e.pago) {
+    if (e.dias < 0) return { t: `Pago vencido hace ${-e.dias} ${e.dias === -1 ? 'día' : 'días'}: ${fmt(e.porPagar, e.mon)}`, cls: 'mal' };
+    if (e.dias === 0) return { t: `Hoy vence el pago: ${fmt(e.porPagar, e.mon)}`, cls: 'mal' };
+    return { t: `Pagá ${fmt(e.porPagar, e.mon)} antes del ${diaMes(e.pago)} · ${e.dias === 1 ? 'falta 1 día' : 'faltan ' + e.dias + ' días'}`, cls: e.dias <= 5 ? 'aviso' : '' };
+  }
+  if (e.porPagar > 0) return { t: `Del corte del ${diaMes(e.corte)} debés ${fmt(e.porPagar, e.mon)}`, cls: '' };
+  return { t: `Corte pagado · próximo corte ${diaMes(e.prox)}`, cls: 'bien' };
+}
+// en Inicio: tarjetas con pago en 7 días o menos, o ya vencido
+function bloquePagos() {
+  return [...saldos().values()].map(c => ({ c, e: estadoTarjeta(c) }))
+    .filter(x => x.e && x.e.porPagar > 0 && x.e.pago && x.e.dias <= 7)
+    .map(x => `<button class="item alerta ${x.e.dias <= 0 ? 'pasada' : ''}" data-accion="ir" data-v="cuentas" style="margin-top:12px">
+      ${anillo(1, x.e.dias <= 0 ? 'excedido' : 'neutro', 'tarjeta', 44)}
+      <span class="nombre">${esc(x.c.m.nombre)}<small>${textoCorte(x.e).t}</small></span>${ico('derecha', 'fin')}</button>`).join('');
+}
+
 function vistaCuentas() {
   const mv = S.cfg.moneda_vista, sal = [...saldos().values()];
   const tengo = sal.filter(c => !esCredito(c.m)).reduce((a, c) => a + conv(c.saldo, c.m.moneda || 'CRC', mv), 0);
@@ -465,10 +507,11 @@ function vistaCuentas() {
   ${sal.length ? `<div class="destacada"><span class="lado"><small>Tenés</small><b class="${tengo < 0 ? 'mal' : ''}">${tengo < 0 ? '−' : ''}${fmt(Math.abs(tengo), mv)}</b></span>
     ${hayCredito ? `<span class="lado der"><small>Debés en tarjetas</small><b class="${debo > 0 ? 'mal' : ''}">${fmt(debo, mv)}</b></span>` : ''}</div>
   <div class="separador"></div>
-  <section class="pila chica">${sal.map(c => { const x = textoSaldo(c); return `<button class="movu" data-accion="editar-metodo" data-id="${c.m.id}">
+  <section class="pila chica">${sal.map(c => { const x = textoSaldo(c), e = estadoTarjeta(c), tc = e ? textoCorte(e) : null; return `<button class="movu ${esCredito(c.m) ? 'alta' : ''}" data-accion="editar-metodo" data-id="${c.m.id}">
       <span class="tile">${ico(tipoMetodo(c.m)[1])}</span>
       <span class="txt"><b>${esc(c.m.nombre)}</b><small>${tipoMetodo(c.m)[0]}${pr && pr.id === c.m.id ? ' · recibe tus ingresos' : ''}</small></span>
-      <span class="monto ${x.cls}">${x.t}${x.sub ? `<small>${x.sub}</small>` : ''}</span></button>`; }).join('')}</section>
+      <span class="monto ${x.cls}">${x.t}${x.sub ? `<small>${x.sub}</small>` : ''}</span>
+      ${e ? `<span class="pie-corte"><span class="${tc.cls}">${tc.t}</span><span>Va en este corte: ${fmt(e.nuevas, e.mon)} · cierra el ${diaMes(e.prox)}</span></span>` : esCredito(c.m) ? '<span class="pie-corte"><span>Tocá para poner el día de corte y de pago</span></span>' : ''}</button>`; }).join('')}</section>
   <div class="acciones" style="margin-top:16px"><button class="btn primario" data-accion="nuevo-traslado">${ico('traslado')} Traslado o pago de tarjeta</button></div>
   <div class="acciones" style="margin-top:10px"><button class="btn" data-accion="nueva-cuenta">${ico('mas')} Agregar cuenta o tarjeta</button></div>`
   : `<div class="vacio">${ico('billete')}<div>Activá el saldo en una cuenta o tarjeta y la app lo lleva sola: baja con cada gasto y sube con cada ingreso.</div></div>`}
@@ -552,7 +595,7 @@ function bloqueCuentas() {
   <div class="rollo-cuentas">${sal.map(c => { const x = textoSaldo(c), cred = esCredito(c.m); return `<button class="mini-cuenta" data-accion="ir" data-v="cuentas">
       <span class="mc-top">${ico(tipoMetodo(c.m)[1])}<span>${esc(c.m.nombre)}</span></span>
       <b class="${x.cls}">${x.t}</b>
-      <small>${cred ? (x.sub === 'debés' ? 'Debés' : 'Sin deuda') : 'Disponible'}</small></button>`; }).join('')}
+      <small>${cred ? (x.sub === 'debés' ? 'Debés' : 'Sin deuda') : 'Disponible'}${(() => { const e = cred ? estadoTarjeta(c) : null; return e && e.porPagar > 0 && e.pago ? ' · pago ' + diaMes(e.pago) : ''; })()}</small></button>`; }).join('')}
     <button class="mini-cuenta nueva" data-accion="nueva-cuenta" aria-label="Agregar cuenta o tarjeta">${ico('mas')}<small>Agregar</small></button></div>`;
 }
 
@@ -1186,14 +1229,41 @@ async function crearSugeridas(tipo) {
   render(); toast(`${nuevas.length} categorías agregadas`);
 }
 
+// Meta con fecha: cuánto falta, cuánto apartar por quincena y si va al día.
+// "Al día" se mide en línea recta desde que se puso la meta (plan_desde, plan_base) hasta la fecha.
+function planAhorro(a) {
+  const meta = Number(a.meta) || 0, tiene = Number(a.ahorrado) || 0;
+  if (!(meta > 0) || !a.fecha_meta) return null;
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const fin = new Date(a.fecha_meta + 'T00:00:00');
+  const falta = Math.max(0, meta - tiene), dias = Math.round((fin - hoy) / 864e5);
+  if (falta <= 0) return { listo: true, falta: 0, fin };
+  if (dias <= 0) return { vencida: true, falta, fin };
+  const quincenas = Math.max(1, Math.ceil(dias / 15));
+  const ini = new Date((a.plan_desde || String(a.creado || '').slice(0, 10) || aISO(hoy)) + 'T00:00:00'), base = Math.min(Number(a.plan_base) || 0, meta);
+  const total = Math.max(1, (fin - ini) / 864e5), avance = Math.min(1, Math.max(0, (hoy - ini) / 864e5 / total));
+  const atraso = Math.max(0, Math.round((base + (meta - base) * avance - tiene) * 100) / 100);
+  return { falta, dias, quincenas, porQuincena: falta / quincenas, atraso, fin };
+}
+function textoPlan(a) {
+  const pl = planAhorro(a);
+  if (!pl) return null;
+  const cuando = `${MESES[pl.fin.getMonth()]} ${pl.fin.getFullYear()}`;
+  if (pl.listo) return { t: 'Meta cumplida', cls: 'bien' };
+  if (pl.vencida) return { t: `La fecha ya pasó · faltan ${fmt(pl.falta, a.moneda)}`, cls: 'mal' };
+  const base = `Apartá ${fmt(pl.porQuincena, a.moneda)} por quincena hasta ${cuando}`;
+  return pl.atraso > 0 ? { t: `${base} · vas ${fmt(pl.atraso, a.moneda)} atrás`, cls: 'aviso' } : { t: `${base} · vas al día`, cls: 'bien' };
+}
+
 function vistaAhorros() {
   return `
   ${top('Ahorros')}
   <section class="pila">
-    ${S.ahorros.map(a => `<button class="item" data-accion="mover-ahorro" data-id="${a.id}">
+    ${S.ahorros.map(a => `<button class="item ${a.fecha_meta && a.meta > 0 ? 'con-pie' : ''}" data-accion="mover-ahorro" data-id="${a.id}">
       ${anillo(a.meta > 0 ? a.ahorrado / a.meta : 0, a.ahorrado > 0 ? '' : 'neutro', a.icono)}
       <span class="nombre">${esc(a.nombre)}${a.meta > 0 ? `<small>Meta ${fmt(a.meta, a.moneda)}</small>` : ''}</span>
-      <span class="valor"><b class="bien">${fmt(a.ahorrado, a.moneda)}</b><span>ahorrados</span></span></button>`).join('')}
+      <span class="valor"><b class="bien">${fmt(a.ahorrado, a.moneda)}</b><span>ahorrados</span></span>
+      ${(() => { const x = textoPlan(a); return x ? `<span class="pie-corte"><span class="${x.cls}">${x.t}</span></span>` : ''; })()}</button>`).join('')}
     ${S.ahorros.length ? '' : `<div class="vacio">${ico('alcancia')}<div>Creá una meta de ahorro con el botón ＋.<br>Le podés poner meta y pasarle el sobrante de tus categorías.</div></div>`}
   </section>`;
 }
@@ -1269,6 +1339,7 @@ function vistaAjustes() {
   <div class="titulo">General</div>
   <div class="grupo">
     ${filaCfg('pincel', 's7', 'Tema y color', temas[S.cfg.tema] || 'Automático', 'personalizacion')}
+    ${filaCfg('escudo', 's4', 'Bloqueo con Face ID', leerBloq() ? 'Activado en este dispositivo' : 'Desactivado', 'bloqueo')}
   </div>
 
   <div class="titulo">Datos</div>
@@ -1281,7 +1352,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 13`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 14`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1554,7 +1625,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 13</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 14</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1563,7 +1634,7 @@ const VISTAS = {
   suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos, catcfg: vistaCatCfg, grupos: vistaGrupos, cuentas: vistaCuentas, resumen: vistaResumen,
   sobre: vistaSobre, movimientos: vistaMovimientos, sinsobre: vistaSinSobre, historial: vistaHistorialGeneral,
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
-  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, acerca: vistaAcerca, descargas: vistaDescargas,
+  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, acerca: vistaAcerca, descargas: vistaDescargas,
 };
 const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Categorías'], ['ahorros', 'alcancia', 'Ahorros'], ['est', 'barras', 'Análisis'], ['movs', 'buscar', 'Buscar']];
 
@@ -1668,6 +1739,7 @@ function hojaGasto(g = null, pre = {}) {
       <label class="campo"><span>Comercio</span><input name="comercio" value="${esc(base.comercio || '')}" placeholder="Opcional" list="comercios" autocomplete="off"></label>
       <label class="campo"><span>Fecha</span><input type="datetime-local" name="fecha" value="${local}"></label>
       <label class="campo"><span>Nota</span><input name="nota" value="${esc(/^(sub|ahorro):/.test(base.nota || '') ? '' : base.nota || '')}" placeholder="Opcional"></label>
+      ${g ? '' : `<label class="campo"><span>Cuotas</span><select name="cuotas"><option value="">De contado</option>${[3, 6, 10, 12, 18, 24].map(n => `<option value="${n}">${n} cuotas sin intereses</option>`).join('')}</select></label>`}
       ${/^(sub|ahorro):/.test(base.nota || '') ? '' : `<label class="campo"><span>Repetir</span><select name="repetir"><option value="">No se repite</option><option value="semanal">Cada semana</option><option value="bisemanal">Cada 2 semanas</option><option value="mensual">Cada mes</option></select></label>`}
       ${automatico && g.comercio ? `<label class="campo"><span style="color:var(--tinta)">Recordar categoría para este comercio</span><span class="interruptor"><input type="checkbox" name="recordar" checked><span></span></span></label>` : ''}
     </div>
@@ -1703,10 +1775,14 @@ function hojaGasto(g = null, pre = {}) {
     if (g) Object.assign(g, await api.actualizar('gastos', g.id, fila));
     else S.gastos.push(await api.insertar('gastos', { ...fila, fuente: pre.fuente || 'manual', tarjeta: pre.tarjeta || null }));
     S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    // compra en cuotas: este gasto queda como la cuota 1 y las demás se anotan solas cada mes
+    const nCuotas = !g && f.cuotas ? Number(f.cuotas.value) || 0 : 0;
+    let enCuotas = null;
+    if (nCuotas > 1) { const nuevo = S.gastos.find(x => x.monto === fila.monto && x.fecha === fila.fecha && !/^sub:/.test(x.nota || '')) ; if (nuevo) { enCuotas = await pasarACuotas(nuevo, nCuotas); fila.comercio = null; } }
     const recordar = f.recordar ? f.recordar.checked : true;
     if (fila.comercio && fila.sobre_id && recordar) await aprender(fila.comercio, fila.sobre_id);
     // repetir: queda como gasto fijo y los siguientes se anotan solos
-    const cada = f.repetir ? f.repetir.value : '';
+    const cada = f.repetir && !enCuotas ? f.repetir.value : '';
     if (cada) {
       const fd = new Date(fila.fecha), sig = new Date(fd.getFullYear(), fd.getMonth(), fd.getDate() + (cada === 'semanal' ? 7 : cada === 'bisemanal' ? 14 : 1));
       S.subs.push(await api.insertar('suscripciones', { nombre: fila.comercio || cat?.nombre || 'Gasto', tipo: 'fijo', monto: fila.monto, moneda: fila.moneda,
@@ -1720,7 +1796,7 @@ function hojaGasto(g = null, pre = {}) {
       else if (desp >= 0.8 && antes < 0.8) aviso = `${cat.nombre}: te quedan ${fmt(Math.max(0, (1 - desp) * lim), cat.moneda)} ${PER_CAT[perCat(cat)][1]}`;
     }
     cerrarHoja(); render();
-    toast(aviso || (cada ? `Gasto agregado · se repite ${cada === 'semanal' ? 'cada semana' : cada === 'bisemanal' ? 'cada 2 semanas' : 'cada mes'}` : g ? 'Gasto actualizado' : 'Gasto agregado'), aviso ? 5000 : undefined);
+    toast(aviso || (enCuotas ? `Listo: ${nCuotas} cuotas de ${fmt(enCuotas, fila.moneda)}` : cada ? `Gasto agregado · se repite ${cada === 'semanal' ? 'cada semana' : cada === 'bisemanal' ? 'cada 2 semanas' : 'cada mes'}` : g ? 'Gasto actualizado' : 'Gasto agregado'), aviso ? 5000 : undefined);
   });
 }
 
@@ -1796,6 +1872,8 @@ function hojaMetodo(m = null, pre = {}) {
       <label class="campo"><span style="color:var(--tinta)">Llevar el saldo</span><span class="interruptor"><input type="checkbox" name="lleva_saldo" ${m?.lleva_saldo || pre.saldo ? 'checked' : ''}><span></span></span></label>
       <label class="campo" data-saldo><span data-etq-saldo>Saldo de hoy</span><input name="saldo" inputmode="decimal" value="${mostrado || ''}" placeholder="0"></label>
       <label class="campo" data-saldo><span>Moneda</span><select name="moneda_cta"><option value="CRC" ${m?.moneda !== 'USD' ? 'selected' : ''}>Colones ₡</option><option value="USD" ${m?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>
+      <label class="campo" data-saldo data-cred><span>Día de corte</span><input name="dia_corte" inputmode="numeric" maxlength="2" value="${m?.dia_corte || ''}" placeholder="Ej. 15"></label>
+      <label class="campo" data-saldo data-cred><span>Día de pago</span><input name="dia_pago" inputmode="numeric" maxlength="2" value="${m?.dia_pago || ''}" placeholder="Ej. 5"></label>
       <label class="campo" data-saldo data-propia><span style="color:var(--tinta)">Aquí caen mis ingresos</span><span class="interruptor"><input type="checkbox" name="principal" ${(m ? m.principal : !cuentaPrincipal()) ? 'checked' : ''}><span></span></span></label>
     </div>
     <p class="nota" data-saldo data-nota-saldo></p>
@@ -1808,9 +1886,10 @@ function hojaMetodo(m = null, pre = {}) {
     const lleva = f.lleva_saldo.checked, cred = f.tipo.value === 'credito';
     f.querySelectorAll('[data-saldo]').forEach(x => { x.hidden = !lleva; });
     f.querySelector('[data-propia]').hidden = !lleva || cred;
+    f.querySelectorAll('[data-cred]').forEach(x => { x.hidden = !lleva || !cred; });
     f.querySelector('[data-etq-saldo]').textContent = cred ? 'Deuda de hoy' : 'Saldo de hoy';
     f.querySelector('[data-nota-saldo]').textContent = cred
-      ? 'Poné lo que debés hoy en la tarjeta. Cada compra la sube y cada pago (traslado) la baja.'
+      ? 'Poné lo que debés hoy en la tarjeta. Cada compra la sube y cada pago (traslado) la baja. Con el día de corte y el de pago (salen en el estado de cuenta) la app te dice cuánto pagar y cuándo.'
       : 'Poné lo que tenés hoy. De aquí en adelante baja con cada gasto y sube con cada ingreso o traslado. Si se desajusta, cambiá el número y vuelve a arrancar desde hoy.';
   };
   f.lleva_saldo.addEventListener('change', acomodar); f.tipo.addEventListener('change', acomodar); acomodar();
@@ -1820,8 +1899,11 @@ function hojaMetodo(m = null, pre = {}) {
     if (!nombre) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
     if (u4 && u4.length !== 4) { f.ultimos4.classList.add('mal-campo'); f.ultimos4.focus(); return; }
     const lleva = f.lleva_saldo.checked, cred = f.tipo.value === 'credito';
+    const dia = (c) => { const n = parseInt(c.value, 10); return lleva && cred && n >= 1 && n <= 31 ? n : null; };
+    for (const c of [f.dia_corte, f.dia_pago]) if (lleva && cred && c.value.trim() && !dia(c)) { c.classList.add('mal-campo'); c.focus(); toast('El día va del 1 al 31'); return; }
     const fila = { nombre, tipo: f.tipo.value, ultimos4: u4 || null, sobre_id: valorRadio(f, 'sobre') || null,
-      lleva_saldo: lleva, moneda: f.moneda_cta.value, principal: lleva && !cred && f.principal.checked };
+      lleva_saldo: lleva, moneda: f.moneda_cta.value, principal: lleva && !cred && f.principal.checked,
+      dia_corte: dia(f.dia_corte), dia_pago: dia(f.dia_pago) };
     if (lleva) {
       const n = leerMontoCampo(f.saldo.value);
       // saldo nuevo o corregido: se vuelve a contar desde este momento
@@ -1918,15 +2000,19 @@ function hojaCuotas(g) {
   f.addEventListener('change', pintar); pintar();
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const n = Number(valorRadio(f, 'n')), cuota = Math.round(g.monto / n * 100) / 100, nombre = g.comercio || 'Compra';
-    const sub = await api.insertar('suscripciones', {
-      nombre, tipo: 'cuotas', monto: cuota, moneda: g.moneda, frecuencia: 'mensual', dia_cobro: new Date(g.fecha).getDate(), mes_cobro: null,
-      cuotas: n, cuotas_hechas: 1, como_pendiente: false, sobre_id: g.sobre_id || null, metodo_id: g.metodo_id || null, activa: true,
-    });
-    S.subs.push(sub);
-    Object.assign(g, await api.actualizar('gastos', g.id, { monto: cuota, comercio: `${nombre} (cuota 1/${n})`, nota: 'sub:' + sub.id }));
+    const n = Number(valorRadio(f, 'n')), cuota = await pasarACuotas(g, n);
     cerrarHoja(); render(); toast(`Listo: ${n} cuotas de ${fmt(cuota, g.moneda)}`);
   });
+}
+async function pasarACuotas(g, n) {
+  const cuota = Math.round(g.monto / n * 100) / 100, nombre = g.comercio || sobreDe(g.sobre_id)?.nombre || 'Compra';
+  const sub = await api.insertar('suscripciones', {
+    nombre, tipo: 'cuotas', monto: cuota, moneda: g.moneda, frecuencia: 'mensual', dia_cobro: new Date(g.fecha).getDate(), mes_cobro: null,
+    cuotas: n, cuotas_hechas: 1, como_pendiente: false, sobre_id: g.sobre_id || null, metodo_id: g.metodo_id || null, activa: true,
+  });
+  S.subs.push(sub);
+  Object.assign(g, await api.actualizar('gastos', g.id, { monto: cuota, comercio: `${nombre} (cuota 1/${n})`, nota: 'sub:' + sub.id }));
+  return cuota;
 }
 
 function hojaAhorro(a = null) {
@@ -1934,8 +2020,10 @@ function hojaAhorro(a = null) {
     <div class="campos">
       <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(a?.nombre || '')}" placeholder="Viaje, emergencias…" autofocus></label>
       <label class="campo"><span>Meta</span><input name="meta" inputmode="decimal" value="${a?.meta || ''}" placeholder="Opcional"></label>
+      <label class="campo"><span>Para cuándo</span><input type="date" name="fecha_meta" value="${a?.fecha_meta || ''}"></label>
       <label class="campo"><span>Moneda</span><select name="moneda"><option value="CRC">Colones ₡</option><option value="USD" ${a?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>
     </div>
+    <p class="nota">Con meta y fecha, la app te dice cuánto apartar cada quincena y si vas al día.</p>
     <div class="etiqueta">Ícono</div>${rejilla('icono', ICONOS_AHORRO, a?.icono || 'meta')}
     <div class="acciones">
       ${a ? `<button type="button" class="btn peligro" data-accion="borrar-ahorro" data-id="${a.id}" aria-label="Eliminar ahorro">${ico('basura')}</button>` : ''}
@@ -1944,7 +2032,9 @@ function hojaAhorro(a = null) {
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!f.nombre.value.trim()) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
-    const fila = { nombre: f.nombre.value.trim(), meta: leerMontoCampo(f.meta.value), moneda: f.moneda.value, icono: valorRadio(f, 'icono') || 'meta' };
+    const fila = { nombre: f.nombre.value.trim(), meta: leerMontoCampo(f.meta.value), moneda: f.moneda.value, icono: valorRadio(f, 'icono') || 'meta', fecha_meta: f.fecha_meta.value || null };
+    // si cambia la meta o la fecha, el plan arranca de hoy con lo que ya hay ahorrado
+    if (!a || Number(a.meta) !== fila.meta || (a.fecha_meta || null) !== fila.fecha_meta || !a.plan_desde) { fila.plan_desde = aISO(new Date()); fila.plan_base = Number(a?.ahorrado) || 0; }
     if (a) Object.assign(a, await api.actualizar('ahorros', a.id, fila));
     else S.ahorros.push(await api.insertar('ahorros', { ...fila, ahorrado: 0, orden: S.ahorros.length }));
     cerrarHoja(); render(); toast('Ahorro guardado');
@@ -1997,7 +2087,7 @@ function hojaPasarAhorro(s) {
 
 function hojaMoverAhorro(a) {
   const f = abrirHoja(a.nombre, `
-    <p class="nota" style="text-align:center;margin:0 0 4px">Ahorrado: <b class="bien">${fmt(a.ahorrado, a.moneda)}</b>${a.meta ? ` de ${fmt(a.meta, a.moneda)}` : ''}</p>
+    <p class="nota" style="text-align:center;margin:0 0 4px">Ahorrado: <b class="bien">${fmt(a.ahorrado, a.moneda)}</b>${a.meta ? ` de ${fmt(a.meta, a.moneda)}` : ''}${(() => { const x = textoPlan(a); return x ? `<br><span class="${x.cls}">${x.t}</span>` : ''; })()}</p>
     <div class="monto-grande">
       <div class="fila-monto"><span class="simbolo">${a.moneda === 'USD' ? '$' : '₡'}</span><input name="monto" inputmode="decimal" placeholder="0" autofocus aria-label="Monto"></div>
       <div class="alternar" role="radiogroup"><label><input type="radio" name="tipo" value="1" checked><span>Agregar</span></label><label><input type="radio" name="tipo" value="-1"><span>Retirar</span></label></div>
@@ -2362,7 +2452,7 @@ async function accion(el) {
     case 'exportar': exportar(); break;
     case 'leer-aviso': leerAvisoPegado(); break;
     case 'registrar-aviso': S.avisoLeido?.ingreso ? hojaIngreso(null, S.avisoLeido) : hojaGasto(null, S.avisoLeido); break;
-    case 'salir': borrarCopia(); await api.salir(); location.reload(); break;
+    case 'salir': quitarBloq(); borrarCopia(); await api.salir(); location.reload(); break;
   }
 }
 
@@ -2384,6 +2474,16 @@ document.addEventListener('change', async (e) => {
   }
   if (t.dataset.desc) { if (t.value) { S.desc[t.dataset.desc] = t.value; S.desc.preset = ''; render(); } return; }
   if (t.hasAttribute('data-desc-preset')) { S.desc = { ...rangoPreset(t.value), preset: t.value }; render(); return; }
+  if (t.hasAttribute('data-bloqueo')) {
+    if (t.checked) {
+      try { await activarBloqueo(); toast('Bloqueo activado'); }
+      catch (err) { toast(/no ofrece/.test(err.message) ? err.message : 'No se activó el bloqueo', 4000); }
+    } else {
+      try { await pedirBiometria(); quitarBloq(); toast('Bloqueo desactivado'); }   // para quitarlo también hay que verificar
+      catch { toast('No se pudo verificar: el bloqueo sigue activo', 4000); }
+    }
+    render(); return;
+  }
   if (t.hasAttribute('data-tc-auto')) {
     guardarTC({ ...leerTC(), auto: t.checked }); render();
     if (t.checked) actualizarTC(true);
@@ -2449,6 +2549,73 @@ function pantallaAcceso(msg = '') {
   f.crear.addEventListener('click', () => entrar(true));
 }
 
+// ================= bloqueo con Face ID o huella (opcional, por dispositivo) =================
+// Es un candado de pantalla: se guarda en este teléfono y pide la biometría al abrir la app.
+const CLAVE_BLOQ = 'whiplash-bloqueo';
+const leerBloq = () => { try { return JSON.parse(localStorage.getItem(CLAVE_BLOQ)) || null; } catch { return null; } };
+const quitarBloq = () => { try { localStorage.removeItem(CLAVE_BLOQ); } catch { /* nada */ } };
+const aB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const deB64 = (s) => Uint8Array.from(atob(s), ch => ch.charCodeAt(0));
+const azar = (n) => crypto.getRandomValues(new Uint8Array(n));
+async function hayBiometria() {
+  try { return !!(window.isSecureContext && window.PublicKeyCredential && navigator.credentials && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); }
+  catch { return false; }
+}
+async function activarBloqueo() {
+  if (!(await hayBiometria())) throw new Error('Este dispositivo no ofrece Face ID o huella para la app');
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge: azar(32), rp: { name: NOMBRE_APP },
+    user: { id: azar(16), name: NOMBRE_APP + ' (bloqueo)', displayName: NOMBRE_APP + ' (bloqueo)' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+    authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+    timeout: 60000, attestation: 'none' } });
+  localStorage.setItem(CLAVE_BLOQ, JSON.stringify({ id: aB64(cred.rawId) }));
+}
+async function pedirBiometria() {
+  const b = leerBloq();
+  if (!b) return;
+  await navigator.credentials.get({ publicKey: { challenge: azar(32), allowCredentials: [{ type: 'public-key', id: deB64(b.id) }], userVerification: 'required', timeout: 60000 } });
+}
+let bloqueada = false, pidiendo = false, ocultaDesde = 0;
+function taparPantalla() {
+  let c = $('#candado');
+  if (!c) { c = document.createElement('div'); c.id = 'candado'; document.body.append(c); }
+  c.hidden = false;
+  c.innerHTML = `<div class="candado-caja"><img src="icon.svg" alt=""><b>${NOMBRE_APP}</b><p data-msg>Bloqueada</p>
+    <button class="btn primario" data-abrir>Desbloquear</button><button class="enlace" data-salir>Cerrar sesión</button></div>`;
+  c.querySelector('[data-abrir]').onclick = () => desbloquear();
+  c.querySelector('[data-salir]').onclick = async () => {
+    if (!confirm('Se cierra la sesión en este teléfono y se quita el bloqueo. Para volver a entrar vas a necesitar tu correo y contraseña.')) return;
+    quitarBloq(); borrarCopia(); await api.salir(); location.reload();
+  };
+}
+const destapar = () => { bloqueada = false; const c = $('#candado'); if (c) c.hidden = true; };
+async function desbloquear() {
+  if (pidiendo) return;
+  pidiendo = true;
+  try { await pedirBiometria(); destapar(); }
+  catch { const m = $('#candado [data-msg]'); if (m) m.textContent = 'No se pudo verificar. Tocá Desbloquear para intentar otra vez.'; }
+  finally { pidiendo = false; }
+}
+function bloquear() {
+  if (!leerBloq()) return;
+  bloqueada = true; taparPantalla(); desbloquear();
+}
+document.addEventListener('visibilitychange', () => {
+  if (!leerBloq() || !S.usuario) return;
+  if (document.hidden) { ocultaDesde = Date.now(); if (!bloqueada) taparPantalla(); return; }   // tapa lo que se ve al cambiar de app
+  if (bloqueada) { desbloquear(); return; }
+  if (Date.now() - ocultaDesde > 60000) bloquear(); else destapar();   // menos de un minuto afuera: no vuelve a pedir
+});
+function vistaBloqueo() {
+  const on = !!leerBloq();
+  return `${top('Bloqueo', { atras: true })}
+  <div class="campos"><label class="campo"><span style="color:var(--tinta)">Pedir Face ID o huella al abrir</span>
+    <span class="interruptor"><input type="checkbox" data-bloqueo ${on ? 'checked' : ''}><span></span></span></label></div>
+  <p class="nota">${on ? 'Activado en este dispositivo. Se pide al abrir la app y al volver después de un minuto fuera.' : 'Opcional. Si lo activás, la app pide Face ID o huella al abrirla y al volver después de un minuto fuera.'}</p>
+  <p class="nota">Vale solo para este teléfono; en otro dispositivo se activa aparte. Al activarlo, el teléfono guarda una llave de acceso llamada "${NOMBRE_APP} (bloqueo)". Si algún día no funciona el Face ID, desde la pantalla de bloqueo podés cerrar sesión y entrar con tu correo y contraseña.</p>`;
+}
+
 // Copia local de los datos: la app pinta al instante con lo último que vio y luego se pone al día
 const CLAVE_COPIA = 'whiplash-copia-v1';
 const CAMPOS_COPIA = ['cfg', 'sobres', 'catsIng', 'archivadas', 'metodos', 'gastos', 'reglas', 'subs', 'ahorros', 'ingresos', 'fijos', 'traslados'];
@@ -2466,6 +2633,7 @@ async function iniciar() {
   const u = await api.sesion();
   if (!u) return pantallaAcceso();
   S.usuario = u;
+  bloquear();
   $('#acceso').hidden = true; $('#app').hidden = false;
   const copia = modoDemo ? null : leerCopia(u.id);
   if (copia) { Object.assign(S, copia); aplicarTema(); render(); }
