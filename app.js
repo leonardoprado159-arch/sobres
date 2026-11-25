@@ -2056,8 +2056,56 @@ async function iniciar() {
   }
 }
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
-let toqueX = null;
-document.addEventListener('touchstart', (e) => { toqueX = e.target.closest && e.target.closest('.cajon') ? e.touches[0].clientX : null; }, { passive: true });
-document.addEventListener('touchend', (e) => { if (toqueX != null && e.changedTouches[0].clientX - toqueX < -50) cerrarPanel(); toqueX = null; }, { passive: true });
+// ---------- versión nueva: se aplica sola ----------
+const NUCLEO = ['./', 'app.js', 'styles.css', 'store.js', 'iconos.js', 'parser.js', 'config.js'];
+let hayNueva = false, relojNueva = null;
+function ocupadoAhora() {
+  const a = document.activeElement;
+  return !$('#hoja').hidden || !$('#panel').hidden || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+}
+function aplicarNueva() {
+  if (!hayNueva) return;
+  clearTimeout(relojNueva);
+  if (ocupadoAhora()) { relojNueva = setTimeout(aplicarNueva, 3000); return; }   // no interrumpe lo que se está escribiendo
+  let ultima = 0;
+  try { ultima = +sessionStorage.getItem('whiplash-recarga') || 0; } catch { /* sin storage */ }
+  if (Date.now() - ultima < 20000) return;   // nunca dos recargas seguidas
+  try { sessionStorage.setItem('whiplash-recarga', String(Date.now())); } catch { /* sin storage */ }
+  location.reload();
+}
+const buscarNueva = () => { for (const f of NUCLEO) fetch(f).catch(() => {}); };
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').then((r) => {
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { r.update().catch(() => {}); buscarNueva(); } });
+  }).catch(() => {});
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.tipo !== 'actualizada') return;
+    hayNueva = true; clearTimeout(relojNueva); relojNueva = setTimeout(aplicarNueva, 2500);   // espera a que bajen todos los archivos
+  });
+}
+
+// ---------- gestos: deslizar para volver y para cerrar el menú ----------
+let toque = null;
+const deslizaSolo = (el) => {   // carruseles y filas que ya se deslizan de lado
+  for (; el && el !== document.body; el = el.parentElement) {
+    if (el.scrollWidth > el.clientWidth + 4 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true;
+    if (el.tagName === 'INPUT' && el.type === 'range') return true;
+  }
+  return false;
+};
+document.addEventListener('touchstart', (e) => {
+  if (e.touches.length !== 1) { toque = null; return; }
+  const p = e.touches[0], el = e.target;
+  toque = { x: p.clientX, y: p.clientY, t: Date.now(), cajon: !!(el.closest && el.closest('.cajon')), borde: p.clientX < 30, libre: !deslizaSolo(el) };
+}, { passive: true });
+document.addEventListener('touchend', (e) => {
+  const q = toque; toque = null;
+  if (!q) return;
+  const p = e.changedTouches[0], dx = p.clientX - q.x, dy = Math.abs(p.clientY - q.y);
+  if (q.cajon) { if (dx < -50) cerrarPanel(); return; }
+  if (!$('#hoja').hidden || !$('#panel').hidden || !S.pila.length) return;
+  if (Date.now() - q.t > 700 || dy > Math.abs(dx) * 0.6) return;   // tiene que ser un gesto rápido y horizontal
+  // desde el borde izquierdo, o un deslizón largo hacia la derecha en cualquier parte
+  if (dx > (q.borde ? 60 : 110) && (q.borde || q.libre)) { S.pila.pop(); render(true); }
+}, { passive: true });
 iniciar();
