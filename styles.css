@@ -522,3 +522,5 @@ button { cursor: pointer; background: none; border: 0; padding: 0; text-align: i
 .marca-est.pendiente { background: #eda100; }
 .marca-est.planeado { background: #2a78d6; }
 .movu.por-pagar .monto { color: var(--suave); }
+
+.btn.chico.gris { background: var(--carta); }

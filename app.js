@@ -140,12 +140,16 @@ async function cobrarSuscripciones() {
     cobro.setHours(9);
     if (cobro > hoy || new Date(s.creado) > cobro) continue;
     const marca = 'sub:' + s.id;
-    const ya = S.gastos.some(g => g.nota === marca && Math.abs(new Date(g.fecha) - cobro) < 2 * 864e5);
-    if (ya) continue;
+    if (S.gastos.some(g => g.nota === marca && Math.abs(new Date(g.fecha) - cobro) < 2 * 864e5)) continue;
+    // tasa cero: una cuota por mes hasta completar; después se apaga sola
+    const esCuotas = s.tipo === 'cuotas' && s.cuotas > 0, k = (s.cuotas_hechas || 0) + 1;
+    if (esCuotas && k > s.cuotas) { Object.assign(s, await api.actualizar('suscripciones', s.id, { activa: false })); continue; }
     S.gastos.push(await api.insertar('gastos', {
       sobre_id: s.sobre_id, metodo_id: s.metodo_id || null, monto: s.monto, moneda: s.moneda,
-      comercio: s.nombre, fuente: 'suscripcion', fecha: cobro.toISOString(), nota: marca,
+      comercio: esCuotas ? `${s.nombre} (cuota ${k}/${s.cuotas})` : s.nombre, fuente: 'suscripcion', fecha: cobro.toISOString(), nota: marca,
+      estado: s.como_pendiente ? 'pendiente' : 'pagado',
     }));
+    if (esCuotas) Object.assign(s, await api.actualizar('suscripciones', s.id, { cuotas_hechas: k, activa: k < s.cuotas }));
   }
   S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
 }
@@ -355,7 +359,7 @@ function abrirPanel() {
     <div class="cajon-lista">
       ${fila('monedas', 'Ingresos fijos', 'fijos')}
       ${fila('tarjeta', 'Métodos de pago', 'metodos')}
-      ${fila('calendario', 'Suscripciones', 'suscripciones')}
+      ${fila('calendario', 'Gastos fijos y cuotas', 'suscripciones')}
       ${fila('bandeja', `Gastos sin sobre${n ? ` (${n})` : ''}`, 'sinsobre')}
       ${fila('historial', 'Historial', 'historial')}
       ${fila('descargar', 'Descargar datos', 'descargas')}
@@ -599,7 +603,7 @@ function vistaSobres() {
     }).join('')}
     <button class="item punteado" data-accion="nuevo-sobre">${ico('mas')} Nuevo sobre</button>
     <button class="item" data-accion="ir" data-v="suscripciones">${anillo(1, 'neutro', 'calendario')}
-      <span class="nombre">Suscripciones<small>${S.subs.filter(s => s.activa).length} activas</small></span>${ico('derecha', 'fin')}</button>
+      <span class="nombre">Gastos fijos y cuotas<small>${S.subs.filter(s => s.activa).length} activos</small></span>${ico('derecha', 'fin')}</button>
   </section>`;
 }
 
@@ -615,27 +619,34 @@ function vistaAhorros() {
   </section>`;
 }
 
+const TIPOS_FIJO = { suscripcion: 'Suscripción', fijo: 'Gasto fijo', cuotas: 'Tasa cero' };
+const esCuotas = (s) => s.tipo === 'cuotas' && s.cuotas > 0;
+
 function vistaSuscripciones() {
   const mv = S.cfg.moneda_vista;
   const activas = S.subs.filter(s => s.activa);
   const mensual = activas.reduce((a, s) => a + conv(s.frecuencia === 'anual' ? s.monto / 12 : s.monto, s.moneda, mv), 0);
   const lista = [...S.subs].sort((a, b) => (b.activa - a.activa) || (proximoCobro(a) - proximoCobro(b)));
   return `
-  ${top('Suscripciones', { atras: true })}
-  <div class="destacada"><span class="lado"><b style="font-size:19px;font-weight:600">Total mensual</b></span>
+  ${top('Gastos fijos', { atras: true })}
+  <div class="destacada"><span class="lado"><b style="font-size:19px;font-weight:600">Total mensual</b><small>suscripciones, fijos y cuotas</small></span>
     <span class="lado der"><b>${fmt(mensual, mv)}</b></span></div>
   <div class="separador"></div>
   <section class="pila">
     ${lista.map(s => {
-      const p = proximoCobro(s), a = cobroAnterior(s);
-      const frac = (Date.now() - a) / (p - a);
+      const p = proximoCobro(s), a = cobroAnterior(s), c = esCuotas(s), hechas = s.cuotas_hechas || 0;
+      const frac = c ? hechas / s.cuotas : (Date.now() - a) / (p - a);
+      const sub = !s.activa ? (c && hechas >= s.cuotas ? 'Terminado' : 'Pausado')
+        : `${s.como_pendiente ? 'Aprox. el' : 'Próximo:'} ${p.getDate()} ${MESES[p.getMonth()]}`;
+      const der = c ? `${hechas} de ${s.cuotas} cuotas` : s.frecuencia === 'anual' ? 'Anual' : 'Mensual';
       return `<button class="item" data-accion="editar-sub" data-id="${s.id}" ${s.activa ? '' : 'style="opacity:.55"'}>
-        ${anillo(frac, '', 'calendario')}
-        <span class="nombre">${esc(s.nombre)}<small>${s.activa ? `Próximo cobro: ${p.getDate()} ${MESES[p.getMonth()]}` : 'Pausada'}</small></span>
-        <span class="valor"><b>${fmt(s.monto, s.moneda)}</b><span>${s.frecuencia === 'anual' ? 'Anual' : 'Mensual'}</span></span></button>`;
+        ${anillo(frac, '', c ? 'tarjeta' : s.tipo === 'fijo' ? 'recibo' : 'calendario')}
+        <span class="nombre">${esc(s.nombre)}<small>${sub}</small></span>
+        <span class="valor"><b>${fmt(s.monto, s.moneda)}</b><span>${der}</span></span></button>`;
     }).join('')}
-    ${S.subs.length ? '' : `<div class="vacio">${ico('calendario')}<div>Agregá Netflix, Spotify o lo que pagués cada mes con el botón ＋</div></div>`}
-  </section>`;
+    ${S.subs.length ? '' : `<div class="vacio">${ico('calendario')}<div>Con el botón ＋ agregá lo que pagás cada mes: alquiler, luz, Netflix o una compra a tasa cero.</div></div>`}
+  </section>
+  <p class="nota">Cada gasto se anota solo el día que le pongás. Si la fecha es aproximada, marcalo así y queda como pendiente hasta que confirmés que lo pagaste.</p>`;
 }
 
 const filaAjuste = (icono, texto, v, valor = '') =>
@@ -995,6 +1006,7 @@ function hojaGasto(g = null, pre = {}) {
     </div>
     <datalist id="comercios">${[...new Set(S.gastos.map(x => x.comercio).filter(Boolean))].slice(0, 80).map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     ${automatico ? `<p class="nota">Registrado por ${FUENTES[g.fuente]}${g.tarjeta ? ' · tarjeta •••• ' + esc(g.tarjeta) : ''}</p>` : ''}
+    ${g && !/^(sub|ahorro):/.test(g.nota || '') ? `<div class="botones-resumen" style="margin-top:14px"><button type="button" class="btn chico gris" data-accion="a-cuotas" data-id="${g.id}">${ico('tarjeta')} Pasar a cuotas (tasa cero)</button></div>` : ''}
     <div class="acciones">
       ${g ? `<button type="button" class="btn peligro" data-accion="borrar-gasto" data-id="${g.id}" aria-label="Borrar gasto">${ico('basura')}</button>` : ''}
       <button type="submit" class="btn primario">Guardar</button>
@@ -1090,41 +1102,91 @@ function hojaMetodo(m = null) {
 }
 
 function hojaSub(s = null) {
-  const f = abrirHoja(s ? 'Editar suscripción' : 'Nueva suscripción', `
+  const tipo0 = s?.tipo || 'fijo';
+  const total0 = s && esCuotas(s) ? Math.round(s.monto * s.cuotas * 100) / 100 : s?.monto ?? '';
+  const f = abrirHoja(s ? 'Editar gasto fijo' : 'Nuevo gasto fijo', `
+    <div class="chips" role="radiogroup" aria-label="Tipo" style="margin-bottom:6px">
+      ${Object.entries(TIPOS_FIJO).map(([k, n]) => `<label><input type="radio" name="tipo" value="${k}" ${tipo0 === k ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div>
     <div class="monto-grande">
-      <div class="fila-monto"><span class="simbolo">${s?.moneda === 'CRC' ? '₡' : '$'}</span><input name="monto" inputmode="decimal" placeholder="0" value="${s?.monto ?? ''}" aria-label="Monto"></div>
-      ${alternarMoneda('moneda', s?.moneda || 'USD')}
+      <div class="fila-monto"><span class="simbolo">${s?.moneda === 'USD' ? '$' : '₡'}</span><input name="monto" inputmode="decimal" placeholder="0" value="${total0}" aria-label="Monto"></div>
+      ${alternarMoneda('moneda', s?.moneda || 'CRC')}
+      <small class="nota" id="ayuda-monto" style="margin:8px 0 0"></small>
     </div>
     <div class="campos">
-      <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(s?.nombre || '')}" placeholder="Spotify" autofocus></label>
-      <label class="campo"><span>Frecuencia</span><select name="frecuencia"><option value="mensual">Mensual</option><option value="anual" ${s?.frecuencia === 'anual' ? 'selected' : ''}>Anual</option></select></label>
-      <label class="campo"><span>Día de cobro</span><input name="dia_cobro" inputmode="numeric" value="${s?.dia_cobro ?? new Date().getDate()}"></label>
+      <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(s?.nombre || '')}" placeholder="Alquiler, luz, televisor…" autocomplete="off"></label>
+      <label class="campo" data-solo="cuotas"><span>Cuotas</span><input name="cuotas" inputmode="numeric" value="${s?.cuotas ?? 3}"></label>
+      <label class="campo" data-solo="cuotas"><span>Ya pagadas</span><input name="cuotas_hechas" inputmode="numeric" value="${s?.cuotas_hechas ?? 0}"></label>
+      <label class="campo" data-solo="normal"><span>Frecuencia</span><select name="frecuencia"><option value="mensual">Mensual</option><option value="anual" ${s?.frecuencia === 'anual' ? 'selected' : ''}>Anual</option></select></label>
+      <label class="campo"><span>Día de pago</span><input name="dia_cobro" inputmode="numeric" value="${s?.dia_cobro ?? new Date().getDate()}"></label>
       <label class="campo" data-anual ${s?.frecuencia === 'anual' ? '' : 'hidden'}><span>Mes</span><select name="mes_cobro">${MESES_L.map((m, i) => `<option value="${i + 1}" ${(s?.mes_cobro || new Date().getMonth() + 1) === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
-      ${s ? `<label class="campo"><span style="color:var(--tinta)">Activa</span><span class="interruptor"><input type="checkbox" name="activa" ${s.activa ? 'checked' : ''}><span></span></span></label>` : ''}
+      <label class="campo"><span style="color:var(--tinta)">La fecha es aproximada</span><span class="interruptor"><input type="checkbox" name="como_pendiente" ${s?.como_pendiente ? 'checked' : ''}><span></span></span></label>
+      ${s ? `<label class="campo"><span style="color:var(--tinta)">Activo</span><span class="interruptor"><input type="checkbox" name="activa" ${s.activa ? 'checked' : ''}><span></span></span></label>` : ''}
     </div>
     <div class="etiqueta">Cargar al sobre</div>${chipsSobre('sobre', s?.sobre_id)}
-    <p class="nota">El día de cobro se registra solo como gasto, y dos días antes te sale el aviso en Gastos.</p>
+    <p class="nota">Con "fecha aproximada" se anota como pendiente ese día y vos lo pasás a pagado cuando lo pagués.</p>
     <div class="acciones">
-      ${s ? `<button type="button" class="btn peligro" data-accion="borrar-sub" data-id="${s.id}" aria-label="Eliminar suscripción">${ico('basura')}</button>` : ''}
+      ${s ? `<button type="button" class="btn peligro" data-accion="borrar-sub" data-id="${s.id}" aria-label="Eliminar gasto fijo">${ico('basura')}</button>` : ''}
       <button type="submit" class="btn primario">Guardar</button>
     </div>`);
-  f.frecuencia.addEventListener('change', () => { f.querySelector('[data-anual]').hidden = f.frecuencia.value !== 'anual'; });
+  const tipo = () => valorRadio(f, 'tipo') || 'fijo';
+  const acomodar = () => {
+    const c = tipo() === 'cuotas';
+    f.querySelectorAll('[data-solo="cuotas"]').forEach(x => { x.hidden = !c; });
+    f.querySelectorAll('[data-solo="normal"]').forEach(x => { x.hidden = c; });
+    f.querySelector('[data-anual]').hidden = c || f.frecuencia.value !== 'anual';
+    const total = leerMontoCampo(f.monto.value), n = Math.round(Number(f.cuotas.value));
+    $('#ayuda-monto', f).textContent = !c ? 'lo que pagás cada vez'
+      : total && n > 0 ? `precio total · ${n} cuotas de ${fmt(total / n, valorRadio(f, 'moneda'))}` : 'precio total de la compra';
+  };
+  f.addEventListener('input', acomodar); f.addEventListener('change', acomodar); acomodar();
   f.querySelectorAll('input[name="moneda"]').forEach(r => r.addEventListener('change', () => { $('.simbolo', f).textContent = r.value === 'USD' ? '$' : '₡'; }));
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const monto = leerMontoCampo(f.monto.value), dia = Math.round(Number(f.dia_cobro.value));
+    const c = tipo() === 'cuotas';
+    const total = leerMontoCampo(f.monto.value), dia = Math.round(Number(f.dia_cobro.value));
+    const n = Math.round(Number(f.cuotas.value)), hechas = Math.max(0, Math.round(Number(f.cuotas_hechas.value)) || 0);
+    if (!total) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
     if (!f.nombre.value.trim()) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
-    if (!monto) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
+    if (c && !(n >= 2 && n <= 60)) { f.cuotas.classList.add('mal-campo'); f.cuotas.focus(); return; }
+    if (c && hechas > n) { f.cuotas_hechas.classList.add('mal-campo'); f.cuotas_hechas.focus(); return; }
     if (!(dia >= 1 && dia <= 31)) { f.dia_cobro.classList.add('mal-campo'); f.dia_cobro.focus(); return; }
     const fila = {
-      nombre: f.nombre.value.trim(), monto, moneda: valorRadio(f, 'moneda'), frecuencia: f.frecuencia.value, dia_cobro: dia,
-      mes_cobro: f.frecuencia.value === 'anual' ? Number(f.mes_cobro.value) : null, sobre_id: valorRadio(f, 'sobre') || null,
-      activa: s ? f.activa.checked : true,
+      nombre: f.nombre.value.trim(), tipo: tipo(), moneda: valorRadio(f, 'moneda'), dia_cobro: dia,
+      monto: c ? Math.round(total / n * 100) / 100 : total,
+      frecuencia: c ? 'mensual' : f.frecuencia.value, mes_cobro: !c && f.frecuencia.value === 'anual' ? Number(f.mes_cobro.value) : null,
+      cuotas: c ? n : null, cuotas_hechas: c ? hechas : 0, como_pendiente: f.como_pendiente.checked,
+      sobre_id: valorRadio(f, 'sobre') || null, activa: s ? f.activa.checked : true,
     };
+    if (c && hechas >= n) fila.activa = false;
     if (s) Object.assign(s, await api.actualizar('suscripciones', s.id, fila));
     else S.subs.push(await api.insertar('suscripciones', fila));
     await cobrarSuscripciones();
-    cerrarHoja(); render(); toast('Suscripción guardada');
+    cerrarHoja(); render(); toast('Gasto fijo guardado');
+  });
+}
+
+// Pasar una compra ya registrada a tasa cero: la compra queda como la cuota 1
+// y las demás se anotan solas, una por mes.
+function hojaCuotas(g) {
+  const f = abrirHoja('Pasar a cuotas', `
+    <p class="nota" style="text-align:center;margin:0 0 10px">${esc(g.comercio || 'Compra')} · <b>${fmt(g.monto, g.moneda)}</b></p>
+    <div class="etiqueta" style="margin-top:0">¿En cuántas cuotas?</div>
+    <div class="chips" role="radiogroup">${[3, 6, 10, 12, 18, 24].map((n, i) => `<label><input type="radio" name="n" value="${n}" ${i === 0 ? 'checked' : ''}><span>${n} meses</span></label>`).join('')}</div>
+    <div class="resultado" id="res-cuotas" style="margin-top:14px"></div>
+    <p class="nota">Este gasto pasa a ser la cuota 1. Las siguientes se anotan solas cada mes, el mismo día, en el mismo sobre.</p>
+    <div class="acciones"><button type="submit" class="btn primario">Pasar a cuotas</button></div>`);
+  const pintar = () => { const n = Number(valorRadio(f, 'n')); $('#res-cuotas', f).innerHTML = `<b>${n} cuotas de ${fmt(g.monto / n, g.moneda)}</b><br><small>Este mes cuenta solo ${fmt(g.monto / n, g.moneda)} en vez de ${fmt(g.monto, g.moneda)}.</small>`; };
+  f.addEventListener('change', pintar); pintar();
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const n = Number(valorRadio(f, 'n')), cuota = Math.round(g.monto / n * 100) / 100, nombre = g.comercio || 'Compra';
+    const sub = await api.insertar('suscripciones', {
+      nombre, tipo: 'cuotas', monto: cuota, moneda: g.moneda, frecuencia: 'mensual', dia_cobro: new Date(g.fecha).getDate(), mes_cobro: null,
+      cuotas: n, cuotas_hechas: 1, como_pendiente: false, sobre_id: g.sobre_id || null, metodo_id: g.metodo_id || null, activa: true,
+    });
+    S.subs.push(sub);
+    Object.assign(g, await api.actualizar('gastos', g.id, { monto: cuota, comercio: `${nombre} (cuota 1/${n})`, nota: 'sub:' + sub.id }));
+    cerrarHoja(); render(); toast(`Listo: ${n} cuotas de ${fmt(cuota, g.moneda)}`);
   });
 }
 
@@ -1342,8 +1404,8 @@ async function descargarExcel() {
     'Sobre de ahorro': a.nombre, 'Moneda': a.moneda, 'Meta': a.meta > 0 ? Number(a.meta) : null, 'Ahorrado': Number(a.ahorrado),
     'Avance %': a.meta > 0 ? Math.round(a.ahorrado / a.meta * 1000) / 10 : null,
   })), [24, 8, 14, 14, 10]);
-  hoja('Suscripciones', S.subs.map(s => ({
-    'Suscripción': s.nombre, 'Monto': Number(s.monto), 'Moneda': s.moneda, 'Frecuencia': s.frecuencia,
+  hoja('Gastos fijos', S.subs.map(s => ({
+    'Gasto fijo': s.nombre, 'Tipo': TIPOS_FIJO[s.tipo] || 'Suscripción', 'Cuotas': s.cuotas ? `${s.cuotas_hechas || 0} de ${s.cuotas}` : '', 'Monto': Number(s.monto), 'Moneda': s.moneda, 'Frecuencia': s.frecuencia,
     'Día de cobro': s.dia_cobro, 'Próximo cobro': proximoCobro(s), 'Sobre': sobreDe(s.sobre_id)?.nombre || '', 'Activa': s.activa ? 'Sí' : 'No',
   })), [22, 12, 8, 12, 12, 14, 18, 8]);
   X.writeFile(libro, `${NOMBRE_APP} ${r.archivo}.xlsx`, { cellDates: true });
@@ -1454,6 +1516,7 @@ async function accion(el) {
     case 'informe': informe(); break;
     case 'editar-gasto': hojaGasto(S.gastos.find(g => g.id === id)); break;
     case 'editar-sub': hojaSub(S.subs.find(s => s.id === id)); break;
+    case 'a-cuotas': hojaCuotas(S.gastos.find(g => g.id === id)); break;
     case 'nuevo-metodo': hojaMetodo(); break;
     case 'metodo-rapido':
       S.metodos.push(await api.insertar('metodos_pago', { nombre: el.dataset.nombre, tipo: el.dataset.tipo, ultimos4: null, sobre_id: null, orden: S.metodos.length }));
@@ -1476,7 +1539,7 @@ async function accion(el) {
       cerrarHoja(); render(); toast('Sobre eliminado'); break;
     }
     case 'borrar-sub':
-      if (!confirm('¿Eliminar esta suscripción? Los cobros ya registrados se quedan.')) return;
+      if (!confirm('¿Eliminar este gasto fijo? Lo que ya se registró se queda.')) return;
       await api.borrar('suscripciones', id); S.subs = S.subs.filter(s => s.id !== id); cerrarHoja(); render(); break;
     case 'borrar-metodo':
       if (!confirm('¿Eliminar este método de pago?')) return;
