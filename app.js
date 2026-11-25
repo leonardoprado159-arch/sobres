@@ -190,8 +190,9 @@ function listaPorDia(gastos, conSobre = true) {
 const enCicloI = (c) => S.ingresos.filter(i => { const f = new Date(i.fecha); return f >= c.ini && f < c.fin; });
 const conSigno = (n, moneda, s) => (Math.abs(n) < 0.005 ? '' : s) + fmt(Math.abs(n), moneda);
 
-// Balance del ciclo: lo que entró menos lo que salió. "Seguro para gastar" le resta lo que
-// todavía está reservado en sobres con presupuesto.
+// Balance del ciclo: lo que realmente entró menos lo que realmente se gastó.
+// "Seguro para gastar" solo le resta lo que ya está comprometido (gastos pendientes o planeados).
+// El presupuesto de los sobres NO se resta: es un plan, no plata que ya salió.
 function balance(c = ciclo()) {
   const mv = S.cfg.moneda_vista, gastos = enCiclo(c), ingresos = enCicloI(c);
   const ing = ingresos.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0);
@@ -201,7 +202,7 @@ function balance(c = ciclo()) {
   const reservado = S.sobres.filter(s => s.presupuesto > 0)
     .reduce((a, s) => a + conv(Math.max(0, s.presupuesto - gastadoSobre(s, gastos)), s.moneda, mv), 0);
   const disp = ing - gas;
-  return { mv, ing, gas, disp, reservado, porPagar, seguro: disp - porPagar - reservado, dias: Math.max(1, diasParaCierre()), hayIngresos: ingresos.length > 0 };
+  return { mv, ing, gas, disp, reservado, porPagar, seguro: disp - porPagar, dias: Math.max(1, diasParaCierre()), hayIngresos: ingresos.length > 0 };
 }
 
 // Ingresos fijos (salario): fechas de pago de este mes y del anterior que ya pasaron
@@ -292,12 +293,12 @@ function vistaInicio() {
     seguro = `<section class="tarjeta-seguro">
       <div class="ts-top"><span class="tile ing">${ico('efectivo')}</span><b>Seguro para gastar</b></div>
       <div class="ts-monto bien">${fmt(b.seguro, mv)}</div>
-      <p>${fmt(b.seguro / b.dias, mv)} / día · ${b.dias} ${b.dias === 1 ? 'día restante' : 'días restantes'}${b.reservado > 0 ? `<br>${fmt(b.reservado, mv)} reservados en tus sobres` : ''}${b.porPagar > 0 ? `<br>${fmt(b.porPagar, mv)} por pagar` : ''}</p></section>`;
+      <p>${fmt(b.seguro / b.dias, mv)} / día · ${b.dias} ${b.dias === 1 ? 'día restante' : 'días restantes'}${b.porPagar > 0 ? `<br>Ya descontados ${fmt(b.porPagar, mv)} por pagar` : ''}</p></section>`;
   } else {
     seguro = `<section class="tarjeta-seguro deficit">
       <div class="ts-top"><span class="tile mal">${ico('info')}</span><b>Déficit del período</b></div>
       <div class="ts-monto mal">−${fmt(Math.abs(b.seguro), mv)}</div>
-      <p>${b.disp < 0 ? 'Tus gastos superan tus ingresos.' : `Lo disponible no alcanza para cubrir los ${fmt(b.reservado, mv)} que faltan en tus sobres.`}</p></section>`;
+      <p>${b.disp < 0 ? 'Tus gastos superan tus ingresos.' : `Lo disponible no alcanza para los ${fmt(b.porPagar, mv)} que tenés por pagar.`}</p></section>`;
   }
   return `
   <header class="top inicio">
