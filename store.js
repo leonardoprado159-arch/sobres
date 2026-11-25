@@ -4,7 +4,16 @@ const CFG = window.SOBRES_CONFIG || {};
 const forzarDemo = ['localhost', '127.0.0.1'].includes(location.hostname) && location.search.includes('demo');
 export const modoDemo = forzarDemo || !(CFG.url && CFG.anonKey);
 
-const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+const uid = () => (crypto.randomUUID ? crypto.randomUUID()
+  : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)));
+
+// ---------- cola sin conexión ----------
+// Lo que no se pudo mandar por falta de señal queda aquí y se sube solo, en orden, al volver la conexión.
+const CLAVE_COLA = 'whiplash-cola-v1';
+const leerCola = () => { try { return JSON.parse(localStorage.getItem(CLAVE_COLA)) || []; } catch { return []; } };
+const guardarCola = (c) => { try { localStorage.setItem(CLAVE_COLA, JSON.stringify(c)); } catch { /* sin espacio */ } };
+const sinRed = (err) => (typeof navigator !== 'undefined' && navigator.onLine === false)
+  || /failed to fetch|load failed|networkerror|network request failed|fetch failed|la conexión/i.test(String(err?.message || err));
 
 // ---------- Demo (localStorage) ----------
 const CLAVE = 'sobres-demo-v2';
@@ -47,6 +56,10 @@ const backendDemo = {
   async borrar(tabla, id) {
     demo()[tabla] = demo()[tabla].filter(r => r.id !== id); persistir();
   },
+  async sincronizar() { return { subidos: 0, fallidos: 0 }; },
+  pendientes() { return 0; },
+  vaciarCola() {},
+  alEncolar: null,
   urlFuncion: '',
 };
 
@@ -56,7 +69,42 @@ function backendSupabase() {
     auth: { persistSession: true, autoRefreshToken: true },
   });
   const chk = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
-  return {
+  const mandar = async (o) => {
+    if (o.op === 'insertar') {
+      if (o.tabla === 'reglas_comercio') return chk(await sb.from(o.tabla).upsert(o.fila).select().single());
+      return chk(await sb.from(o.tabla).insert(o.fila).select().single());
+    }
+    if (o.op === 'actualizar') return chk(await sb.from(o.tabla).update(o.cambios).eq(o.campo, o.id).select())[0];
+    chk(await sb.from(o.tabla).delete().eq('id', o.id));
+  };
+  // Sube lo pendiente en orden. Se detiene si sigue sin señal; lo que el servidor rechaza se descarta.
+  let subiendo = null;
+  function sincronizar() {
+    if (subiendo) return subiendo;
+    subiendo = (async () => {
+      let subidos = 0, fallidos = 0;
+      for (;;) {
+        const cola = leerCola();
+        if (!cola.length) break;
+        try { await mandar(cola[0]); subidos++; }
+        catch (e) { if (sinRed(e)) break; fallidos++; }
+        guardarCola(leerCola().slice(1));
+      }
+      return { subidos, fallidos };
+    })().finally(() => { subiendo = null; });
+    return subiendo;
+  }
+  // Intenta mandar; sin señal, lo deja en la cola y devuelve la fila como quedaría
+  async function conCola(o, local) {
+    if (leerCola().length) await sincronizar();   // primero lo anterior, para no cruzar el orden
+    if (!leerCola().length) {
+      try { return await mandar(o); } catch (e) { if (!sinRed(e)) throw e; }
+    }
+    guardarCola([...leerCola(), o]);
+    try { backend.alEncolar && backend.alEncolar(); } catch { /* nada */ }
+    return local();
+  }
+  const backend = {
     async sesion() { const { data } = await sb.auth.getSession(); return data.session?.user || null; },    async entrar(email, clave) { return chk(await sb.auth.signInWithPassword({ email, password: clave })).user; },
     async registrarse(email, clave) {
       const d = chk(await sb.auth.signUp({ email, password: clave, options: { emailRedirectTo: location.href } }));
@@ -73,16 +121,18 @@ function backendSupabase() {
       return chk(await q);
     },
     async insertar(tabla, fila) {
-      if (tabla === 'reglas_comercio') return chk(await sb.from(tabla).upsert(fila).select().single());
-      return chk(await sb.from(tabla).insert(fila).select().single());
+      // el id se pone aquí para que la fila exista igual aunque se guarde sin conexión
+      const f = tabla === 'reglas_comercio' || fila.id ? fila : { id: uid(), ...fila };
+      return conCola({ op: 'insertar', tabla, fila: f }, () => ({ creado: new Date().toISOString(), ...f }));
     },
     async actualizar(tabla, id, cambios, campo = 'id') {
-      const d = chk(await sb.from(tabla).update(cambios).eq(campo, id).select());
-      return d[0];
+      return conCola({ op: 'actualizar', tabla, id, cambios, campo }, () => ({ ...cambios }));
     },
-    async borrar(tabla, id) { chk(await sb.from(tabla).delete().eq('id', id)); },
+    async borrar(tabla, id) { await conCola({ op: 'borrar', tabla, id }, () => undefined); },
+    sincronizar, pendientes: () => leerCola().length, vaciarCola: () => guardarCola([]), alEncolar: null,
     urlFuncion: CFG.url.replace(/\/$/, '') + '/functions/v1/registrar',
   };
+  return backend;
 }
 
 export const api = modoDemo ? backendDemo : backendSupabase();

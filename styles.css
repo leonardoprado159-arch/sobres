@@ -691,3 +691,10 @@ button, a, label, select { touch-action: manipulation; }
 .candado-caja b { font-size: 24px; font-weight: 700; }
 .candado-caja p { margin: 0 0 10px; color: var(--suave); }
 .candado-caja .btn { width: 100%; }
+
+/* ---------- importar estado de cuenta ---------- */
+.fila-imp { cursor: pointer; }
+.fila-imp input[type="checkbox"] { width: 22px; height: 22px; margin: 0 9px; flex: none; accent-color: var(--bien); }
+.fila-imp.apagada { opacity: .55; }
+.fila-imp .txt b { white-space: normal; overflow-wrap: anywhere; }
+.campo input[type="file"] { max-width: 62%; font-size: 13px; }

@@ -57,9 +57,12 @@ const S = {
   ingresos: [], fijos: [], traslados: [], catsIng: [], archivadas: [], catTab: 'gasto', mov: { filtro: 'todo', q: '' }, est: { per: 'mes', d: 0, sel: 5 },
   tab: 'inicio', pila: [],
 };
+const porClasificar = (g) => !g.sobre_id && g.fuente !== 'ahorro';   // lo apartado para una meta no es un gasto por clasificar
 const vistaActual = () => S.pila[S.pila.length - 1] || { v: S.tab };
 
 async function cargarTodo() {
+  const sub = await api.sincronizar();   // primero sube lo que quedó guardado sin conexión
+  if (sub.fallidos) toast(`${sub.fallidos} ${sub.fallidos === 1 ? 'cambio guardado sin conexión no se pudo subir' : 'cambios guardados sin conexión no se pudieron subir'}`, 5000);
   const [config, sobres, metodos, gastos, reglas, subs, ahorros, ingresos, fijos, traslados] = await Promise.all(
     ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos', 'traslados'].map(t => api.listar(t)));
   S.cfg = config[0];
@@ -324,7 +327,7 @@ function listaMovs(l, vacio = 'Todavía no hay movimientos.') {
 function vistaInicio() {
   const c = ciclo(), b = balance(c), mv = b.mv;
   const pct = b.ing > 0 ? Math.max(0, Math.min(1, b.disp / b.ing)) : 0;
-  const pendientes = S.gastos.filter(g => !g.sobre_id && new Date(g.fecha) >= c.ini).length;
+  const pendientes = S.gastos.filter(g => porClasificar(g) && new Date(g.fecha) >= c.ini).length;
   const prox = S.subs.filter(s => s.activa).map(s => ({ s, d: Math.round((proximoCobro(s) - new Date().setHours(0, 0, 0, 0)) / 864e5) })).filter(x => x.d <= 2);
   let seguro;
   if (!b.hayIngresos) {
@@ -366,7 +369,7 @@ function vistaInicio() {
     </div>
   </section>`}
   ${seguro}
-  ${bloqueCuentas()}${bloquePagos()}${bloqueResumen()}${bloqueAlertas()}
+  ${bloqueCola()}${bloqueCuentas()}${bloquePagos()}${bloqueResumen()}${bloqueAlertas()}
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre" style="margin-top:12px">
       ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin categoría' : 'gastos sin categoría'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
   ${prox.map(({ s, d }) => `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'calendario', 44)}
@@ -401,7 +404,7 @@ function abrirPanel() {
   const fila = (icono, color, txt, sub, v) => `<button class="fila cfg" data-accion="ir" data-v="${v}">
     <span class="tile" style="color:var(--${color});background:color-mix(in srgb, var(--${color}) 14%, var(--fondo))">${ico(icono)}</span>
     <span class="txt"><b>${txt}</b>${sub ? `<small>${sub}</small>` : ''}</span></button>`;
-  const n = S.gastos.filter(g => !g.sobre_id).length;
+  const n = S.gastos.filter(porClasificar).length;
   const activos = S.subs.filter(s => s.activa).length;
   p.innerHTML = `<div class="velo" data-accion="cerrar-panel"></div>
   <aside class="cajon" role="dialog" aria-label="Menú">
@@ -737,6 +740,37 @@ function hojaIngreso(i = null, pre = {}) {
     else S.ingresos.push(await api.insertar('ingresos', { ...fila, fuente: pre.fuente || 'manual', referencia: pre.referencia || null }));
     S.ingresos.sort((a, b) => b.fecha.localeCompare(a.fecha));
     cerrarHoja(); render(); toast(i ? 'Ingreso actualizado' : 'Ingreso agregado');
+    // ingreso nuevo: ofrece apartar para las metas de ahorro que todavía no están cumplidas
+    if (!i && S.ahorros.some(a => !(Number(a.meta) > 0) || Number(a.ahorrado) < Number(a.meta))) setTimeout(() => hojaRepartir(fila), 320);   // cuando la hoja del ingreso ya terminó de cerrarse
+  });
+}
+
+// Al recibir un ingreso: cuánto apartar para cada meta de ahorro. Lo apartado sale del disponible.
+function hojaRepartir(ing) {
+  const metas = S.ahorros.filter(a => !(Number(a.meta) > 0) || Number(a.ahorrado) < Number(a.meta));
+  const sug = (a) => { const pl = planAhorro(a); return pl && pl.porQuincena ? Math.min(pl.falta, Math.round(pl.porQuincena * 100) / 100) : 0; };
+  const f = abrirHoja('Repartir el ingreso', `
+    <p class="nota" style="text-align:center;margin:0 0 12px">Entraron <b class="bien">${fmt(ing.monto, ing.moneda)}</b>. ¿Cuánto apartás para tus metas?</p>
+    <div class="campos">${metas.map(a => { const x = sug(a); return `<label class="campo"><span>${esc(a.nombre)}${a.moneda !== ing.moneda ? ` (${a.moneda === 'USD' ? '$' : '₡'})` : ''}</span>
+      <input name="m_${a.id}" inputmode="decimal" value="${x ? numATexto(x) : ''}" placeholder="0"></label>`; }).join('')}</div>
+    <div class="resultado" id="res-rep" style="margin-top:14px"></div>
+    <p class="nota">Las metas con fecha ya traen lo que toca por quincena; cambiá el monto o dejalo en 0. Lo que apartés se suma a la meta y se resta de tu disponible.</p>
+    <div class="acciones"><button type="button" class="btn" data-accion="cerrar">Ahora no</button><button type="submit" class="btn primario">Apartar</button></div>`);
+  const leer = () => metas.map(a => ({ a, n: leerMontoCampo(f['m_' + a.id].value) || 0 })).filter(x => x.n > 0);
+  const pintar = () => {
+    const tot = leer().reduce((s, x) => s + conv(x.n, x.a.moneda, ing.moneda), 0);
+    $('#res-rep', f).innerHTML = `<b>Apartás ${fmt(tot, ing.moneda)}</b><br><small>${tot > ing.monto ? 'Es más de lo que entró.' : `Te quedan ${fmt(ing.monto - tot, ing.moneda)} de este ingreso.`}</small>`;
+  };
+  f.addEventListener('input', pintar); pintar();
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const l = leer();
+    for (const { a, n } of l) {
+      S.gastos.push(await api.insertar('gastos', { sobre_id: null, monto: n, moneda: a.moneda, comercio: 'Ahorro: ' + a.nombre, fuente: 'ahorro', fecha: new Date().toISOString(), nota: 'ahorro:' + a.id }));
+      Object.assign(a, await api.actualizar('ahorros', a.id, { ahorrado: Math.round((Number(a.ahorrado) + n) * 100) / 100 }));
+    }
+    S.gastos.sort((x, y) => y.fecha.localeCompare(x.fecha));
+    cerrarHoja(); render(); toast(l.length ? `Apartado para ${l.length} ${l.length === 1 ? 'meta' : 'metas'}` : 'No se apartó nada');
   });
 }
 
@@ -1198,7 +1232,7 @@ function vistaSobres() {
 
   const gastado = lista.reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
   const presup = S.sobres.reduce((a, s) => a + conv(s.presupuesto * PER_CAT[perCat(s)][3], s.moneda, mv), 0);
-  const pendientes = S.gastos.filter(g => !g.sobre_id && new Date(g.fecha) >= c.ini).length;
+  const pendientes = S.gastos.filter(g => porClasificar(g) && new Date(g.fecha) >= c.ini).length;
   return `${cab}
   <div class="destacada">
     <div class="lado"><small>Gastado este mes</small><b>${fmt(gastado, mv)}</b></div>
@@ -1316,7 +1350,7 @@ const filaCfg = (icono, color, titulo, sub, v) => `<button class="fila cfg" data
 function vistaAjustes() {
   const mv = S.cfg.moneda_vista;
   const nCat = S.sobres.length + S.catsIng.length;
-  const sinCat = S.gastos.filter(g => !g.sobre_id).length;
+  const sinCat = S.gastos.filter(porClasificar).length;
   const activos = S.subs.filter(s => s.activa).length;
   const conectado = S.gastos.some(g => g.fuente === 'applepay');
   const temas = { auto: 'Automático', claro: 'Claro', oscuro: 'Oscuro' };
@@ -1353,6 +1387,7 @@ function vistaAjustes() {
   <div class="titulo">Datos</div>
   <div class="grupo">
     ${filaCfg('descargar', 's3', 'Exportar datos', 'Excel, informe PDF o CSV', 'descargas')}
+    ${filaCfg('recibo', 's5', 'Importar estado de cuenta', 'Movimientos del banco en Excel o CSV', 'importar')}
     ${filaCfg('barras', 's7', 'Resumen del período', 'Cierre de semana, quincena o mes', 'resumen')}
     ${filaCfg('historial', 's1', 'Historial', 'Promedios y meses anteriores', 'historial')}
     ${filaCfg('bandeja', 's4', 'Gastos sin categoría', sinCat ? `${sinCat} por asignar` : 'Todo está asignado', 'sinsobre')}
@@ -1360,7 +1395,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 15`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 16`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1574,6 +1609,16 @@ function vistaApplePay() {
     <div class="paso"><b>Mostrar la lista</b>Agregá la acción <code>Seleccionar de la lista</code>. Se conecta sola con el paso anterior.</div>
     <div class="paso"><b>Mandar la categoría elegida</b>Agregá otra <code>Obtener contenido de URL</code> con la misma Dirección, Método <code>POST</code> y dos campos de texto: <code>token</code> → tu Token, y <code>sobre</code> → Elemento seleccionado.</div>
   </div>
+  <div class="titulo" style="margin-top:26px">Atajo para gastos en efectivo</div>
+  <p class="nota" style="margin:0 4px 12px">Un ícono en la pantalla de inicio del iPhone: tocás, escribís el monto, elegís la categoría y queda registrado sin abrir la app.</p>
+  <div class="pasos">
+    <div class="paso"><b>Atajo nuevo</b>En la app Atajos, pestaña Atajos → ＋. Ponele de nombre <code>Gasto en efectivo</code>.</div>
+    <div class="paso"><b>Pedir el monto</b>Agregá la acción <code>Solicitar entrada</code>, cambiá el tipo a <b style="display:inline">Número</b> y en la pregunta escribí <code>¿Cuánto?</code></div>
+    <div class="paso"><b>Mandarlo</b>Agregá <code>Obtener contenido de URL</code> con la Dirección de arriba, Método <code>POST</code> y cuatro campos de texto:<br><code>token</code> → tu Token<br><code>monto</code> → Entrada proporcionada<br><code>fuente</code> → <code>efectivo</code><br><code>preguntar</code> → <code>1</code></div>
+    <div class="paso"><b>Elegir la categoría</b>Agregá <code>Obtener valor del diccionario</code> con la clave <code>opciones</code>, y después <code>Seleccionar de la lista</code>.</div>
+    <div class="paso"><b>Mandar la categoría</b>Otra <code>Obtener contenido de URL</code> con la misma Dirección, Método <code>POST</code> y dos campos: <code>token</code> → tu Token, y <code>sobre</code> → Elemento seleccionado.</div>
+    <div class="paso"><b>A la pantalla de inicio</b>Tocá el nombre del atajo arriba → <b style="display:inline">Agregar a pantalla de inicio</b>. Si tenés un método de pago de tipo Efectivo, el gasto queda con ese método.</div>
+  </div>
   <div class="titulo" style="margin-top:26px">Opcional: ver un aviso</div>
   <div class="pasos">
     <div class="paso"><b>Notificación con el resultado</b>Al final agregá <code>Obtener valor del diccionario</code> con la clave <code>mensaje</code> y luego <code>Mostrar notificación</code>. Te dice la categoría y cuánto queda.</div>
@@ -1633,7 +1678,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 15</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 16</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1642,7 +1687,7 @@ const VISTAS = {
   suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos, catcfg: vistaCatCfg, grupos: vistaGrupos, cuentas: vistaCuentas, resumen: vistaResumen,
   sobre: vistaSobre, movimientos: vistaMovimientos, sinsobre: vistaSinSobre, historial: vistaHistorialGeneral,
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
-  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, acerca: vistaAcerca, descargas: vistaDescargas,
+  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, importar: vistaImportar, acerca: vistaAcerca, descargas: vistaDescargas,
 };
 const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Categorías'], ['ahorros', 'alcancia', 'Ahorros'], ['est', 'barras', 'Análisis'], ['movs', 'buscar', 'Buscar']];
 
@@ -2115,7 +2160,7 @@ function hojaMoverAhorro(a) {
 }
 
 function abrirMenu() {
-  const n = S.gastos.filter(g => !g.sobre_id).length;
+  const n = S.gastos.filter(porClasificar).length;
   const capa = document.createElement('div');
   capa.innerHTML = `<div class="capa-menu" data-accion="cerrar-menu"></div><div class="menu" role="menu">
     <button role="menuitem" data-accion="nuevo-sobre">Nueva categoría ${ico('mas')}</button>
@@ -2204,16 +2249,150 @@ function filasResumen(r) {
   return filas;
 }
 
-async function descargarExcel() {
-  if (!window.XLSX) {
-    toast('Preparando Excel…');
-    await new Promise((ok, mal) => {
-      const sc = document.createElement('script');
-      sc.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
-      sc.onload = ok; sc.onerror = () => mal(new Error('no se pudo cargar el generador de Excel (¿sin internet?)'));
-      document.head.appendChild(sc);
-    });
+async function cargarXLSX(aviso = 'Preparando Excel…') {
+  if (window.XLSX) return window.XLSX;
+  toast(aviso);
+  await new Promise((ok, mal) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    sc.onload = ok; sc.onerror = () => mal(new Error('no se pudo cargar el lector de Excel (¿sin internet?)'));
+    document.head.appendChild(sc);
+  });
+  return window.XLSX;
+}
+
+// ================= importar el estado de cuenta del banco =================
+// Lee el archivo de movimientos (Excel o CSV), busca las columnas de fecha, descripción y monto,
+// marca lo que ya está registrado y deja agregar lo que falta.
+const sinTildes = (x) => String(x ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+const MES_TXT = { ene: 0, jan: 0, feb: 1, mar: 2, abr: 3, apr: 3, may: 4, jun: 5, jul: 6, ago: 7, aug: 7, sep: 8, set: 8, oct: 9, nov: 10, dic: 11, dec: 11 };
+function fechaBanco(v) {
+  if (v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(), v.getMonth(), v.getDate(), 12);
+  if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 864e5)); return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12); }
+  const s = sinTildes(v);
+  let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], 12);
+  m = s.match(/^(\d{1,2})[-/. ]+(\d{1,2})[-/. ]+(\d{2,4})/);   // día/mes/año, como en Costa Rica
+  if (m) return new Date(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[2] - 1, +m[1], 12);
+  m = s.match(/^(\d{1,2})[-/. ]+([a-z]{3})[a-z]*[-/. ,]+(\d{2,4})/);
+  if (m && m[2] in MES_TXT) return new Date(+m[3] < 100 ? 2000 + +m[3] : +m[3], MES_TXT[m[2]], +m[1], 12);
+  return null;
+}
+function numBanco(v) {
+  if (typeof v === 'number') return v;
+  const s = String(v ?? '').trim();
+  if (!s || !/\d/.test(s)) return 0;
+  const neg = /^\(.*\)$/.test(s) || /-/.test(s);
+  let x = s.replace(/[^\d.,]/g, '');
+  const p = x.lastIndexOf('.'), c = x.lastIndexOf(',');
+  if (p >= 0 && c >= 0) { const dec = p > c ? '.' : ','; x = x.split(dec === '.' ? ',' : '.').join('').replace(dec, '.'); }
+  else if (c >= 0) { const pr = x.split(','); x = pr.length === 2 && pr[1].length <= 2 ? pr[0] + '.' + pr[1] : pr.join(''); }
+  else if (p >= 0) { const pr = x.split('.'); if (!(pr.length === 2 && pr[1].length <= 2)) x = pr.join(''); }
+  const n = Number(x);
+  return Number.isFinite(n) ? (neg ? -n : n) : 0;
+}
+function leerEstadoCuenta(filas, monedaCta) {
+  const es = (c, re) => re.test(sinTildes(c));
+  const RE = { fecha: /^fecha/, desc: /descrip|detalle|concepto|comercio|establecimiento|transaccion|movimiento/, deb: /debito|cargo|retiro|compra/, cre: /credito|abono|deposito|pago/, monto: /monto|importe|valor/ };
+  let cab = -1;
+  for (let i = 0; i < Math.min(filas.length, 40); i++) {
+    const f = filas[i] || [];
+    if (f.some(c => es(c, RE.fecha)) && f.some(c => es(c, RE.desc) || es(c, RE.deb) || es(c, RE.monto))) { cab = i; break; }
   }
+  if (cab < 0) return { error: 'No encontré una fila de encabezados con Fecha y Descripción o Monto.' };
+  const h = filas[cab].map(sinTildes);
+  const col = (re, no) => h.findIndex((c, i) => re.test(c) && !(no && no.test(c)) && c !== '' && i >= 0);
+  const iF = col(RE.fecha), iD = col(RE.desc, /^fecha/);
+  const iDeb = col(RE.deb, RE.fecha), iCre = col(RE.cre, RE.fecha);
+  const montos = h.map((c, i) => ({ c, i })).filter(x => RE.monto.test(x.c) || /colones|dolares|local|usd|crc/.test(x.c)).filter(x => x.i !== iDeb && x.i !== iCre && x.i !== iF && x.i !== iD);
+  const monedaDe = (c) => (/dolar|usd|\$/.test(c) ? 'USD' : /colon|crc|local|₡/.test(c) ? 'CRC' : monedaCta);
+  const out = [];
+  for (const f of filas.slice(cab + 1)) {
+    if (!f) continue;
+    const fecha = fechaBanco(f[iF]);
+    if (!fecha) continue;
+    const desc = String(iD >= 0 ? f[iD] ?? '' : '').replace(/\s+/g, ' ').trim();
+    const pagoTxt = /\b(pago|abono|deposito|reversion|reverso|credito|su pago)\b/.test(sinTildes(desc));
+    let puesto = false;
+    if (iDeb >= 0 || iCre >= 0) {
+      const d = iDeb >= 0 ? Math.abs(numBanco(f[iDeb])) : 0, c = iCre >= 0 ? Math.abs(numBanco(f[iCre])) : 0;
+      if (d > 0) { out.push({ fecha, desc, monto: d, moneda: monedaDe(h[iDeb]), entra: false }); puesto = true; }
+      else if (c > 0) { out.push({ fecha, desc, monto: c, moneda: monedaDe(h[iCre]), entra: true }); puesto = true; }
+    }
+    if (!puesto) for (const x of montos) {
+      const n = numBanco(f[x.i]);
+      if (n) out.push({ fecha, desc, monto: Math.abs(n), moneda: monedaDe(x.c), entra: pagoTxt });
+    }
+  }
+  return { filas: out.map(x => ({ ...x, monto: Math.round(x.monto * 100) / 100 })) };
+}
+// marca los movimientos que ya están en la app: mismo monto y moneda, con hasta 4 días de diferencia
+function cruzarImportados(filas) {
+  const usados = new Set();
+  for (const x of filas) {
+    if (x.entra) { x.ya = false; continue; }
+    const g = S.gastos.find(g => !usados.has(g.id) && g.moneda === x.moneda && Math.abs(Number(g.monto) - x.monto) < 0.01 && Math.abs(new Date(g.fecha) - x.fecha) <= 4.5 * 864e5);
+    x.ya = !!g; if (g) usados.add(g.id);
+    x.sel = !x.ya;
+  }
+  return filas;
+}
+async function leerArchivoBanco(archivo) {
+  const X = await cargarXLSX('Leyendo el archivo…');
+  const buf = await archivo.arrayBuffer();
+  let libro;
+  if (/\.(csv|txt)$/i.test(archivo.name)) {
+    let txt;
+    try { txt = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { txt = new TextDecoder('windows-1252').decode(buf); }
+    libro = X.read(txt, { type: 'string', raw: true });
+  } else libro = X.read(buf, { type: 'array', cellDates: true });
+  const m = metodoDe(S.imp.metodo), mon = m?.moneda || 'CRC';
+  let mejor = { error: 'El archivo no tiene hojas con datos.' };
+  for (const n of libro.SheetNames) {
+    const r = leerEstadoCuenta(X.utils.sheet_to_json(libro.Sheets[n], { header: 1, raw: true, defval: '' }), mon);
+    if (r.filas && (!mejor.filas || r.filas.length > mejor.filas.length)) mejor = r;
+    else if (!mejor.filas && r.error) mejor = r;
+  }
+  if (mejor.filas && !mejor.filas.length) mejor = { error: 'Encontré los encabezados pero ninguna fila con fecha y monto.' };
+  S.imp = { ...S.imp, nombre: archivo.name, error: mejor.error || '', filas: mejor.filas ? cruzarImportados(mejor.filas) : null };
+}
+function vistaImportar() {
+  S.imp ||= { metodo: (S.metodos.find(esCredito) || S.metodos[0])?.id || '' };
+  const im = S.imp, fl = im.filas || [];
+  const nuevos = fl.filter(x => !x.entra && !x.ya), ya = fl.filter(x => x.ya), entran = fl.filter(x => x.entra), sel = nuevos.filter(x => x.sel);
+  const fila = (x, i) => `<label class="movu fila-imp ${x.ya || x.entra ? 'apagada' : ''}">
+      ${x.ya || x.entra ? `<span class="tile">${ico(x.ya ? 'check' : 'sube')}</span>` : `<input type="checkbox" data-imp="${i}" ${x.sel ? 'checked' : ''}>`}
+      <span class="txt"><b>${esc(x.desc || 'Sin descripción')}</b><small>${x.fecha.getDate()} ${MESES[x.fecha.getMonth()]}${x.ya ? ' · ya está en la app' : x.entra ? ' · pago o depósito, no se importa' : ''}</small></span>
+      <span class="monto">${fmt(x.monto, x.moneda)}</span></label>`;
+  return `${top('Importar del banco', { atras: true })}
+  <p class="nota" style="margin:-6px 4px 12px">Descargá los movimientos desde el sitio o la app de tu banco (Excel o CSV) y subilos aquí. La app marca los que ya tenés y agrega los que faltan.</p>
+  <div class="campos">
+    <label class="campo"><span>Cuenta o tarjeta</span><select data-imp-metodo><option value="">Ninguna</option>${S.metodos.map(m => `<option value="${m.id}" ${im.metodo === m.id ? 'selected' : ''}>${esc(m.nombre)}</option>`).join('')}</select></label>
+    <label class="campo"><span>Archivo</span><input type="file" data-imp-archivo accept=".csv,.txt,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
+  </div>
+  ${im.error ? `<div class="resultado" style="margin-top:12px"><b>No pude leer ${esc(im.nombre || 'el archivo')}.</b><br><small>${esc(im.error)} Si me mandás un ejemplo del archivo de tu banco lo ajusto a ese formato.</small></div>` : ''}
+  ${im.filas ? `<div class="resultado" style="margin-top:12px"><b>${fl.length} movimientos en ${esc(im.nombre)}</b><br><small>${nuevos.length} nuevos · ${ya.length} ya registrados${entran.length ? ` · ${entran.length} pagos o depósitos` : ''}</small></div>
+  ${nuevos.length ? `<div class="cab-mov" style="margin-top:18px"><h3 class="h-mov">Faltan en la app</h3><button class="enlace sin-raya" data-accion="imp-todos">${sel.length === nuevos.length ? 'Quitar todos' : 'Marcar todos'}</button></div>
+  <div class="pila chica">${fl.map((x, i) => (!x.entra && !x.ya ? fila(x, i) : '')).join('')}</div>
+  <div class="acciones" style="margin-top:14px"><button class="btn primario" data-accion="imp-agregar" ${sel.length ? '' : 'disabled'}>Agregar ${sel.length} ${sel.length === 1 ? 'gasto' : 'gastos'}</button></div>` : `<p class="nota">Todo lo del archivo ya está registrado.</p>`}
+  ${ya.length || entran.length ? `<div class="cab-mov" style="margin-top:22px"><h3 class="h-mov">No se importan</h3></div>
+  <div class="pila chica">${fl.map((x, i) => (x.entra || x.ya ? fila(x, i) : '')).join('')}</div>` : ''}` : ''}
+  <p class="nota" style="margin-top:16px">Los gastos entran con la fecha del banco, el método elegido y la categoría que la app ya conozca para ese comercio; el resto queda en "Sin categoría". Si un mismo cobro aparece con otro monto (propina, tipo de cambio), va a salir como nuevo: desmarcalo.</p>`;
+}
+async function agregarImportados() {
+  const l = (S.imp.filas || []).filter(x => !x.entra && !x.ya && x.sel);
+  for (const x of l) {
+    const regla = S.reglas.find(r => r.comercio === normalizarComercio(x.desc));
+    S.gastos.push(await api.insertar('gastos', { monto: x.monto, moneda: x.moneda, comercio: x.desc.slice(0, 80) || null, fecha: x.fecha.toISOString(),
+      metodo_id: S.imp.metodo || null, sobre_id: regla && sobreDe(regla.sobre_id) ? regla.sobre_id : null, fuente: 'manual', estado: 'pagado', nota: 'Importado del estado de cuenta' }));
+    x.ya = true; x.sel = false;
+  }
+  S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
+  render(); toast(`${l.length} ${l.length === 1 ? 'gasto agregado' : 'gastos agregados'}`);
+}
+
+async function descargarExcel() {
+  await cargarXLSX();
   const r = rangoDescarga();
   const X = window.XLSX, libro = X.utils.book_new();
   const hoja = (nombre, filas, anchos) => {
@@ -2400,6 +2579,8 @@ async function accion(el) {
     case 'presupuesto': hojaPresupuesto(sobreDe(id)); break;
     case 'sobrante-ahorro': hojaPasarAhorro(sobreDe(id)); break;
     case 'excel': await descargarExcel(); break;
+    case 'imp-agregar': await agregarImportados(); break;
+    case 'imp-todos': { const n = S.imp.filas.filter(x => !x.entra && !x.ya), todos = n.every(x => x.sel); n.forEach(x => { x.sel = !todos; }); render(); break; }
     case 'informe': informe(); break;
     case 'editar-gasto': hojaGasto(S.gastos.find(g => g.id === id)); break;
     case 'editar-sub': hojaSub(S.subs.find(s => s.id === id)); break;
@@ -2460,7 +2641,9 @@ async function accion(el) {
     case 'exportar': exportar(); break;
     case 'leer-aviso': leerAvisoPegado(); break;
     case 'registrar-aviso': S.avisoLeido?.ingreso ? hojaIngreso(null, S.avisoLeido) : hojaGasto(null, S.avisoLeido); break;
-    case 'salir': quitarBloq(); borrarCopia(); await api.salir(); location.reload(); break;
+    case 'salir':
+      if (api.pendientes() && !confirm(`Hay ${api.pendientes()} cambios guardados sin conexión que todavía no se subieron. Si cerrás sesión ahora se pierden. ¿Cerrar de todos modos?`)) return;
+      api.vaciarCola(); quitarBloq(); borrarCopia(); await api.salir(); location.reload(); break;
   }
 }
 
@@ -2482,6 +2665,13 @@ document.addEventListener('change', async (e) => {
   }
   if (t.dataset.desc) { if (t.value) { S.desc[t.dataset.desc] = t.value; S.desc.preset = ''; render(); } return; }
   if (t.hasAttribute('data-desc-preset')) { S.desc = { ...rangoPreset(t.value), preset: t.value }; render(); return; }
+  if (t.dataset.imp) { S.imp.filas[Number(t.dataset.imp)].sel = t.checked; render(); return; }
+  if (t.hasAttribute('data-imp-metodo')) { S.imp.metodo = t.value; return; }
+  if (t.hasAttribute('data-imp-archivo')) {
+    if (!t.files[0]) return;
+    try { await leerArchivoBanco(t.files[0]); } catch (err) { S.imp = { ...S.imp, nombre: t.files[0].name, filas: null, error: err.message }; }
+    render(); return;
+  }
   if (t.hasAttribute('data-bloqueo')) {
     if (t.checked) {
       try { await activarBloqueo(); toast('Bloqueo activado'); }
@@ -2594,7 +2784,7 @@ function taparPantalla() {
   c.querySelector('[data-abrir]').onclick = () => desbloquear();
   c.querySelector('[data-salir]').onclick = async () => {
     if (!confirm('Se cierra la sesión en este teléfono y se quita el bloqueo. Para volver a entrar vas a necesitar tu correo y contraseña.')) return;
-    quitarBloq(); borrarCopia(); await api.salir(); location.reload();
+    api.vaciarCola(); quitarBloq(); borrarCopia(); await api.salir(); location.reload();
   };
 }
 const destapar = () => { bloqueada = false; const c = $('#candado'); if (c) c.hidden = true; };
@@ -2662,6 +2852,15 @@ async function refrescar() {
   finally { refrescando = false; }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refrescar(); });
+// Sin señal: el cambio queda en el teléfono y se sube solo al volver la conexión
+let relojCola = null;
+api.alEncolar = () => { clearTimeout(relojCola); relojCola = setTimeout(() => { toast('Sin conexión: quedó guardado en el teléfono y se sube solo', 4000); if (!ocupadoAhora()) render(); }, 2500); };
+window.addEventListener('online', () => { ultimaCarga = 0; refrescar(); });
+function bloqueCola() {
+  const n = api.pendientes();
+  return n ? `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'historial', 44)}
+    <span class="nombre">${n} ${n === 1 ? 'cambio por subir' : 'cambios por subir'}<small>Guardados en el teléfono. Se suben solos al volver la señal.</small></span></div>` : '';
+}
 
 // ---------- versión nueva: se aplica sola ----------
 const NUCLEO = ['./', 'app.js', 'styles.css', 'store.js', 'iconos.js', 'parser.js', 'config.js'];
