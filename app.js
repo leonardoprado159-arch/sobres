@@ -345,11 +345,14 @@ function vistaInicio() {
       <div class="ts-monto mal">−${fmt(Math.abs(b.seguro), mv)}</div>
       <p>${b.disp < 0 ? 'Tus gastos superan tus ingresos.' : `Lo disponible no alcanza para los ${fmt(b.porPagar, mv)} que tenés por pagar.`}</p></section>`;
   }
+  const guia = bloqueGuia();
+  if (guia && !b.hayIngresos) seguro = '';   // el paso de registrar el ingreso ya está en la lista
   return `
   <header class="top inicio">
     <button class="marca-btn" data-accion="panel" aria-label="Abrir menú"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b></span></button>
     <button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>
   </header>
+  ${guia}
   ${b.hayIngresos ? `  <section class="tarjeta-balance">
     <div class="tb-top"><span>Balance disponible</span><button class="chip-moneda oscuro" data-accion="cambiar-moneda" aria-label="Cambiar moneda">${mv} ${ico('abajo')}</button></div>
     <div class="tb-monto">${conSigno(b.disp, mv, b.disp < 0 ? '−' : '') || fmt(0, mv)}</div>
@@ -1381,6 +1384,7 @@ function vistaAjustes() {
   <div class="titulo">General</div>
   <div class="grupo">
     ${filaCfg('pincel', 's7', 'Tema y color', temas[S.cfg.tema] || 'Automático', 'personalizacion')}
+    ${pasosGuia().some(x => !x.listo) ? filaCfg('lista', 's1', 'Primeros pasos', `${pasosGuia().filter(x => x.listo).length} de ${pasosGuia().length} listos`, 'guia') : ''}
     ${filaCfg('mensaje', 's2', 'Avisos al teléfono', pushActivo() ? 'Activados en este teléfono' : 'Pago de tarjeta y límites', 'notificaciones')}
     ${filaCfg('escudo', 's4', 'Bloqueo con Face ID', leerBloq() ? 'Activado en este dispositivo' : 'Desactivado', 'bloqueo')}
   </div>
@@ -1396,7 +1400,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 17`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 18`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1679,7 +1683,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 17</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 18</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1688,7 +1692,7 @@ const VISTAS = {
   suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos, catcfg: vistaCatCfg, grupos: vistaGrupos, cuentas: vistaCuentas, resumen: vistaResumen,
   sobre: vistaSobre, movimientos: vistaMovimientos, sinsobre: vistaSinSobre, historial: vistaHistorialGeneral,
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
-  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, importar: vistaImportar, notificaciones: vistaNotificaciones, acerca: vistaAcerca, descargas: vistaDescargas,
+  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, importar: vistaImportar, notificaciones: vistaNotificaciones, guia: vistaGuia, acerca: vistaAcerca, descargas: vistaDescargas,
 };
 const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Categorías'], ['ahorros', 'alcancia', 'Ahorros'], ['est', 'barras', 'Análisis'], ['movs', 'buscar', 'Buscar']];
 
@@ -2581,6 +2585,8 @@ async function accion(el) {
     case 'sobrante-ahorro': hojaPasarAhorro(sobreDe(id)); break;
     case 'excel': await descargarExcel(); break;
     case 'imp-agregar': await agregarImportados(); break;
+    case 'guia-cats': await agregarSugeridas('gasto'); break;
+    case 'guia-ocultar': guiaGuardar({ oculta: true }); render(); toast('Los encontrás otra vez en Configuración → Primeros pasos', 4000); break;
     case 'probar-aviso': { const d = await llamarAvisos({ accion: 'probar' }); toast(d.ok ? 'Aviso enviado: debería llegar en unos segundos' : 'No se envió: ' + (d.motivo || 'error'), 5000); break; }
     case 'imp-todos': { const n = S.imp.filas.filter(x => !x.entra && !x.ya), todos = n.every(x => x.sel); n.forEach(x => { x.sel = !todos; }); render(); break; }
     case 'informe': informe(); break;
@@ -2619,7 +2625,13 @@ async function accion(el) {
     case 'cfg-atajo-sobre': await guardarCfg({ atajo_sobre_id: el.dataset.valor || null }); render(); toast('Guardado'); break;
     case 'borrar-gasto':
       if (!confirm('¿Borrar este gasto?')) return;
-      await api.borrar('gastos', id); S.gastos = S.gastos.filter(g => g.id !== id); cerrarHoja(); render(); toast('Gasto borrado'); break;
+      { // si era plata apartada para una meta de ahorro, la meta baja en ese monto
+        const g = S.gastos.find(x => x.id === id), a = g && /^ahorro:/.test(g.nota || '') ? S.ahorros.find(x => x.id === g.nota.slice(7)) : null;
+        await api.borrar('gastos', id); S.gastos = S.gastos.filter(x => x.id !== id);
+        if (a) Object.assign(a, await api.actualizar('ahorros', a.id, { ahorrado: Math.max(0, Math.round((Number(a.ahorrado) - conv(g.monto, g.moneda, a.moneda)) * 100) / 100) }));
+        cerrarHoja(); render(); toast(a ? `Gasto borrado · ${a.nombre} bajó ${fmt(conv(g.monto, g.moneda, a.moneda), a.moneda)}` : 'Gasto borrado');
+      }
+      break;
     case 'borrar-sobre': {
       if (!confirm('¿Archivar esta categoría? Deja de salir en las listas. Lo que ya registraste se conserva y la podés restaurar cuando querás.')) return;
       const cat = sobreDe(id) || catIngDe(id);
@@ -2825,6 +2837,55 @@ function vistaBloqueo() {
   <p class="nota">Vale solo para este teléfono; en otro dispositivo se activa aparte. Al activarlo, el teléfono guarda una llave de acceso llamada "${NOMBRE_APP} (bloqueo)". Si algún día no funciona el Face ID, desde la pantalla de bloqueo podés cerrar sesión y entrar con tu correo y contraseña.</p>`;
 }
 
+// ================= primeros pasos =================
+// Lista que se va marcando sola según lo que la persona ya hizo; desaparece al completarla u ocultarla.
+const CLAVE_GUIA = 'whiplash-guia';
+const guiaEstado = () => { try { return JSON.parse(localStorage.getItem(CLAVE_GUIA)) || {}; } catch { return {}; } };
+const guiaGuardar = (c) => { try { localStorage.setItem(CLAVE_GUIA, JSON.stringify({ ...guiaEstado(), ...c })); } catch { /* sin storage */ } };
+function pasosGuia() {
+  return [
+    { t: 'Creá tus categorías', d: 'Agregá las sugeridas con un toque; después les cambiás el nombre, el color o el límite.', ic: 'carrito', listo: S.sobres.length > 0, accion: 'guia-cats', boton: 'Agregar sugeridas' },
+    { t: 'Agregá una cuenta o tarjeta', d: 'Poné el saldo de hoy y la app lo lleva sola con cada gasto e ingreso.', ic: 'tarjeta', listo: cuentas().length > 0, accion: 'nueva-cuenta', boton: 'Agregar cuenta' },
+    { t: 'Registrá tu ingreso', d: 'Con el ingreso la app calcula cuánto podés gastar por día.', ic: 'monedas', listo: S.ingresos.length > 0 || S.fijos.length > 0, accion: 'nuevo-ingreso', boton: 'Registrar ingreso' },
+    { t: 'Conectá Apple Pay', d: 'Cada pago con el teléfono se anota solo, con comercio y tarjeta.', ic: 'celular', listo: S.gastos.some(g => g.fuente === 'applepay'), accion: 'ir', v: 'applepay', boton: 'Ver los pasos' },
+    { t: 'Activá los avisos', d: 'Pago de la tarjeta, límites y cada gasto registrado, en el teléfono.', ic: 'mensaje', listo: !!pushActivo(), accion: 'ir', v: 'notificaciones', boton: 'Activar avisos' },
+  ];
+}
+let guiaAntes = null;
+function bloqueGuia(siempre = false) {
+  if (modoDemo && !siempre && !location.search.includes('guia')) return '';
+  if (!siempre && guiaEstado().oculta) return '';
+  const ps = pasosGuia(), hechos = ps.filter(x => x.listo).length, sig = ps.findIndex(x => !x.listo);
+  if (hechos === ps.length) {
+    if (guiaAntes !== null && guiaAntes < ps.length) { guiaAntes = hechos; guiaGuardar({ oculta: true }); setTimeout(() => toast('Listo: ya tenés todo configurado', 4000), 300); }
+    return siempre ? '<div class="vacio">Ya completaste todos los pasos.</div>' : '';
+  }
+  const de = guiaAntes === null ? hechos : Math.min(guiaAntes, hechos), avanzo = guiaAntes !== null && hechos > guiaAntes;
+  guiaAntes = hechos;
+  return `<section class="guia ${avanzo ? 'avanzo' : ''}">
+    <div class="guia-top"><span><b>Primeros pasos</b><small>${hechos} de ${ps.length} listos</small></span>
+      ${siempre ? '' : `<button class="redondo chico" data-accion="guia-ocultar" aria-label="Ocultar primeros pasos">${ico('cerrar')}</button>`}</div>
+    <div class="guia-barra"><span style="--de:${de / ps.length * 100}%;--a:${hechos / ps.length * 100}%"></span></div>
+    <ol class="guia-pasos">${ps.map((x, i) => `<li class="${x.listo ? 'listo' : i === sig ? 'sigue' : ''}">
+      <span class="guia-num">${x.listo ? ico('check') : i + 1}</span>
+      <div><b>${x.t}</b>${i === sig ? `<p>${x.d}</p><button class="btn primario chico" data-accion="${x.accion}" ${x.v ? `data-v="${x.v}"` : ''}>${ico(x.ic)} ${x.boton}</button>` : ''}</div></li>`).join('')}</ol>
+  </section>`;
+}
+function vistaGuia() { return `${top('Primeros pasos', { atras: true })}${bloqueGuia(true)}`; }
+// cuenta recién creada: una bienvenida corta antes de la lista
+function bienvenida() {
+  if (modoDemo || guiaEstado().vista || S.sobres.length || S.gastos.length || S.metodos.length) return;
+  guiaGuardar({ vista: true });
+  abrirHoja('Te damos la bienvenida', `
+    <div class="bienvenida"><img src="icon.svg" alt="">
+      <p>${NOMBRE_APP} lleva tu plata por categorías: cuánto gastás, cuánto te queda y cuánto debés en cada tarjeta.</p>
+      <ul><li>${ico('carrito')}<span>Ponés un <b>límite</b> a cada categoría y ves cuánto te queda.</span></li>
+        <li>${ico('celular')}<span>Los pagos con <b>Apple Pay</b> se anotan solos.</span></li>
+        <li>${ico('alcancia')}<span>Tus <b>metas de ahorro</b> te dicen cuánto apartar cada quincena.</span></li></ul>
+      <p class="nota" style="text-align:center">En Inicio vas a ver cinco pasos cortos para dejarla lista. Se van marcando solos.</p></div>
+    <div class="acciones"><button type="button" class="btn primario" data-accion="cerrar">Empezar</button></div>`);
+}
+
 // ================= avisos al teléfono (notificaciones) =================
 // Solo con la app agregada a la pantalla de inicio. El servidor revisa cada hora y manda
 // el pago de la tarjeta y los límites de las categorías.
@@ -2865,13 +2926,18 @@ function vistaNotificaciones() {
   ${modoDemo ? '<p class="nota">En el modo demo no hay avisos.</p>' : ok ? `
   <div class="campos"><label class="campo"><span style="color:var(--tinta)">Recibir avisos en este teléfono</span>
     <span class="interruptor"><input type="checkbox" data-avisos ${on ? 'checked' : ''}><span></span></span></label></div>
-  ${on ? `<div class="acciones" style="margin-top:12px"><button class="btn" data-accion="probar-aviso">Mandar un aviso de prueba</button></div>` : ''}
+  ${on ? `<div class="campos" style="margin-top:12px"><label class="campo"><span style="color:var(--tinta)">Avisar cada gasto que registra el atajo</span>
+    <span class="interruptor"><input type="checkbox" data-cfg-bool="avisar_gastos" ${S.cfg.avisar_gastos !== false ? 'checked' : ''}><span></span></span></label></div>
+  <div class="acciones" style="margin-top:12px"><button class="btn" data-accion="probar-aviso">Mandar un aviso de prueba</button></div>` : ''}
   <div class="titulo" style="margin-top:26px">Qué avisa</div>
   <div class="pasos">
+    <div class="paso"><b>Gasto registrado</b>Cuando pagás con Apple Pay o un atajo anota un movimiento, te confirma el monto, el comercio y la categoría en la que cayó. Se apaga con el interruptor de arriba.</div>
     <div class="paso"><b>Pago de la tarjeta de crédito</b>Tres días antes, un día antes, el mismo día y si se venció. Solo para tarjetas con saldo, día de corte y día de pago.${sinCorte ? ` Tenés ${sinCorte} ${sinCorte === 1 ? 'tarjeta sin esos días' : 'tarjetas sin esos días'}: ponelos en Cuentas.` : ''}</div>
-    <div class="paso"><b>Límites de las categorías</b>Cuando una categoría llega al 80 % de su límite y cuando se pasa.</div>
+    <div class="paso"><b>Límites de las categorías</b>Cuando una categoría llega al 80 % de su límite y cuando se pasa. Si fue por un pago con Apple Pay, llega en el momento.</div>
+    <div class="paso"><b>Cobros de mañana</b>El día antes de que se cobre un gasto fijo, una suscripción o una cuota.</div>
+    <div class="paso"><b>Resumen de la semana</b>Los lunes: cuánto gastaste la semana pasada y en qué categoría más.</div>
   </div>
-  <p class="nota">El servidor revisa una vez por hora, entre 7 a. m. y 9 p. m., así que un aviso puede tardar hasta una hora en llegar. Cada aviso sale una sola vez. Se activa por teléfono: en otro dispositivo hay que activarlo aparte.</p>` : `
+  <p class="nota">Lo que no depende de un pago se revisa una vez por hora, entre 8 a. m. y 9 p. m., así que puede tardar hasta una hora en llegar. Cada aviso sale una sola vez. Se activa por teléfono: en otro dispositivo hay que activarlo aparte.</p>` : `
   <div class="resultado"><b>Primero agregá la app a la pantalla de inicio.</b><br><small>El iPhone solo deja mandar avisos a las apps que están en la pantalla de inicio, no a las páginas abiertas en Safari.</small></div>
   <div class="pasos" style="margin-top:12px">
     <div class="paso"><b>En Safari</b>Tocá el botón Compartir (el cuadro con la flecha hacia arriba).</div>
@@ -2902,7 +2968,7 @@ async function iniciar() {
   $('#acceso').hidden = true; $('#app').hidden = false;
   const copia = modoDemo ? null : leerCopia(u.id);
   if (copia) { Object.assign(S, copia); aplicarTema(); render(); }
-  try { await cargarTodo(); ultimaCarga = Date.now(); guardarCopia(); render(); actualizarTC(); }
+  try { await cargarTodo(); ultimaCarga = Date.now(); guardarCopia(); render(); actualizarTC(); if (!bloqueada) bienvenida(); }
   catch (err) {
     if (copia) toast('Sin conexión: se muestra lo último guardado');
     else $('#vista').innerHTML = `<div class="vacio">No pude cargar tus datos.<br><small>${esc(err.message)}</small></div>`;

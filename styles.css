@@ -698,3 +698,36 @@ button, a, label, select { touch-action: manipulation; }
 .fila-imp.apagada { opacity: .55; }
 .fila-imp .txt b { white-space: normal; overflow-wrap: anywhere; }
 .campo input[type="file"] { max-width: 62%; font-size: 13px; }
+
+/* ---------- primeros pasos ---------- */
+.guia { background: var(--carta); border-radius: 24px; padding: 18px 18px 8px; margin-bottom: 16px; }
+.guia-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.guia-top > span { display: flex; flex-direction: column; }
+.guia-top b { font-size: 19px; font-weight: 700; }
+.guia-top small { color: var(--suave); font-size: 13px; }
+.redondo.chico { width: 34px; height: 34px; min-width: 34px; }
+.redondo.chico .i { width: 16px; height: 16px; }
+.guia-barra { height: 8px; border-radius: 99px; background: var(--carta-2); overflow: hidden; margin: 12px 0 6px; }
+.guia-barra span { display: block; height: 100%; width: var(--a); border-radius: 99px; background: var(--bien); animation: guia-llena .7s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes guia-llena { from { width: var(--de); } to { width: var(--a); } }
+.guia-pasos { list-style: none; margin: 0; padding: 0; }
+.guia-pasos li { display: flex; gap: 12px; align-items: flex-start; padding: 11px 0; border-top: 1px solid var(--linea); }
+.guia-pasos li:first-child { border-top: 0; }
+.guia-num { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; background: var(--carta-2); color: var(--suave); }
+.guia-num .i { width: 15px; height: 15px; }
+.guia-pasos li > div { flex: 1; min-width: 0; padding-top: 3px; }
+.guia-pasos li b { font-size: 16px; font-weight: 600; }
+.guia-pasos li p { margin: 4px 0 10px; color: var(--suave); font-size: 14px; line-height: 1.35; }
+.guia-pasos li.listo b { color: var(--tenue); text-decoration: line-through; font-weight: 500; }
+.guia-pasos li.listo .guia-num { background: var(--bien); color: var(--fondo); }
+.guia-pasos li.sigue .guia-num { background: var(--tinta); color: var(--fondo); }
+.guia.avanzo li.listo:last-of-type .guia-num, .guia.avanzo .guia-num:has(.i) { animation: guia-pop .45s ease-out; }
+@keyframes guia-pop { 0% { transform: scale(.4); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
+.btn.chico.primario { display: inline-flex; align-items: center; gap: 8px; }
+.bienvenida { text-align: center; }
+.bienvenida img { width: 68px; height: 68px; border-radius: 18px; }
+.bienvenida p { margin: 12px 0; }
+.bienvenida ul { list-style: none; margin: 14px 0; padding: 0; display: flex; flex-direction: column; gap: 12px; text-align: left; }
+.bienvenida li { display: flex; align-items: center; gap: 12px; background: var(--carta-2); border-radius: 16px; padding: 12px 14px; }
+.bienvenida li .i { width: 22px; height: 22px; flex: none; color: var(--bien); }
+@media (prefers-reduced-motion: reduce) { .guia-barra span, .guia .guia-num { animation: none !important; } }
