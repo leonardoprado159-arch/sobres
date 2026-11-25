@@ -1021,7 +1021,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 4`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 5`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1139,7 +1139,33 @@ function vistaCuenta() {
   ${modoDemo ? '' : `<div style="height:22px"></div><div class="grupo"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
 
+// ---------- tipo de cambio del día (venta de referencia del BCCR, publicada por Hacienda) ----------
+const CLAVE_TC = 'whiplash-tc';
+const leerTC = () => { try { return { auto: true, ...JSON.parse(localStorage.getItem(CLAVE_TC) || '{}') }; } catch { return { auto: true }; } };
+const guardarTC = (d) => { try { localStorage.setItem(CLAVE_TC, JSON.stringify(d)); } catch { /* sin almacenamiento */ } };
+const diaLocal = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+let pidiendoTC = false;
+async function actualizarTC(forzar = false) {
+  const tcd = leerTC();
+  if (!tcd.auto || pidiendoTC || !S.cfg?.user_id) return;
+  if (!forzar && tcd.visto === diaLocal() && tcd.venta) return;   // una consulta por día
+  pidiendoTC = true;
+  try {
+    const r = await fetch('https://api.hacienda.go.cr/indicadores/tc/dolar', { cache: 'no-store' });
+    const j = await r.json();
+    const venta = Number(j?.venta?.valor), compra = Number(j?.compra?.valor);
+    if (!(venta > 100 && venta < 5000)) throw new Error('dato raro');   // si llega algo raro no se toca nada
+    guardarTC({ ...leerTC(), visto: diaLocal(), fecha: j.venta.fecha, venta, compra });
+    if (leerTC().auto && Number(S.cfg.tipo_cambio) !== venta) { await guardarCfg({ tipo_cambio: venta }); guardarCopia(); }
+    if (!ocupadoAhora()) render();
+  } catch { /* sin conexión o sin servicio: se queda el último valor */ }
+  finally { pidiendoTC = false; }
+}
+
 function vistaMonedas() {
+  const tcd = leerTC();
+  const f = tcd.fecha ? tcd.fecha.split('-') : null;
+  const cuando = f ? `${Number(f[2])} ${MESES[Number(f[1]) - 1]}` : '';
   return `${top('Monedas', { atras: true })}
   <div class="titulo">Moneda para totales</div>
   <div class="grupo sin-icono" role="radiogroup">
@@ -1147,8 +1173,14 @@ function vistaMonedas() {
     ${opcion('cfg-moneda', 'USD', 'Dólares ($)', S.cfg.moneda_vista === 'USD')}
   </div>
   <div class="titulo" style="margin-top:26px">Tipo de cambio</div>
-  <div class="campos"><label class="campo"><span>₡ por $1</span>
-    <input type="text" inputmode="decimal" value="${numATexto(S.cfg.tipo_cambio)}" data-cfg="tipo_cambio"></label></div>
+  <div class="campos"><label class="campo"><span style="color:var(--tinta)">Actualizar cada día</span>
+    <span class="interruptor"><input type="checkbox" data-tc-auto ${tcd.auto ? 'checked' : ''}><span></span></span></label>
+  <label class="campo"><span>₡ por $1</span>
+    <input type="text" inputmode="decimal" value="${numATexto(S.cfg.tipo_cambio)}" data-cfg="tipo_cambio" ${tcd.auto ? 'disabled' : ''}></label></div>
+  <p class="nota">${tcd.auto
+    ? (tcd.venta ? `Venta de referencia del Banco Central del ${cuando}: ₡${numATexto(tcd.venta)}${tcd.compra ? ` (compra ₡${numATexto(tcd.compra)})` : ''}. Se revisa sola una vez al día.` : 'Se toma la venta de referencia del Banco Central y se revisa sola una vez al día.')
+    : 'Tipo de cambio fijo: queda el que escribás hasta que lo cambiés.'}
+  Tu banco puede cobrar un poco más que la referencia.</p>
   <p class="nota">Cada categoría tiene su moneda. Un gasto en dólares que cae en una categoría en colones se convierte con este tipo de cambio.</p>`;
 }
 
@@ -1262,7 +1294,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 4</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 5</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1969,6 +2001,11 @@ document.addEventListener('change', async (e) => {
   }
   if (t.dataset.desc) { if (t.value) { S.desc[t.dataset.desc] = t.value; S.desc.preset = ''; render(); } return; }
   if (t.hasAttribute('data-desc-preset')) { S.desc = { ...rangoPreset(t.value), preset: t.value }; render(); return; }
+  if (t.hasAttribute('data-tc-auto')) {
+    guardarTC({ ...leerTC(), auto: t.checked }); render();
+    if (t.checked) actualizarTC(true);
+    return;
+  }
   try {
     if (t.dataset.cfg) {
       let v = t.dataset.cfg === 'tipo_cambio' ? leerMontoCampo(t.value) : Number(t.value);
@@ -2049,7 +2086,7 @@ async function iniciar() {
   $('#acceso').hidden = true; $('#app').hidden = false;
   const copia = modoDemo ? null : leerCopia(u.id);
   if (copia) { Object.assign(S, copia); aplicarTema(); render(); }
-  try { await cargarTodo(); guardarCopia(); render(); }
+  try { await cargarTodo(); guardarCopia(); render(); actualizarTC(); }
   catch (err) {
     if (copia) toast('Sin conexión: se muestra lo último guardado');
     else $('#vista').innerHTML = `<div class="vacio">No pude cargar tus datos.<br><small>${esc(err.message)}</small></div>`;
@@ -2083,6 +2120,8 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
     hayNueva = true; clearTimeout(relojNueva); relojNueva = setTimeout(aplicarNueva, 2500);   // espera a que bajen todos los archivos
   });
 }
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) actualizarTC(); });
 
 // ---------- gestos: deslizar para volver y para cerrar el menú ----------
 let toque = null;
