@@ -804,7 +804,7 @@ function vistaGrupos() {
     <span class="tile" style="background:${colorGrupo(g) || 'var(--tenue)'}"></span>
     <span class="txt"><b>${esc(g)}</b><small>${l.length} ${l.length === 1 ? 'categoría' : 'categorías'}</small></span>${ico('derecha', 'fin')}</button>`).join('')}</section>
   ${grupos.length ? '' : `<div class="vacio">${ico('carpeta')}<div>Todavía no hay grupos.</div></div>`}
-  <p class="nota" style="margin-top:18px">Un grupo se crea al escribirlo en una categoría. Aquí le cambiás el nombre y el color.</p>`;
+  <p class="nota" style="margin-top:18px">Un grupo se crea desde una categoría, con la opción «Nuevo grupo…». Aquí le cambiás el nombre y el color.</p>`;
 }
 
 function hojaGrupo(g) {
@@ -1021,7 +1021,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 5`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 6`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1294,7 +1294,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 5</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 6</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1453,23 +1453,37 @@ function hojaSobre(s = null, tipo = null) {
   const f = abrirHoja(s ? 'Editar categoría' : esIng ? 'Nueva categoría de ingreso' : 'Nueva categoría de gasto', `
     <div class="campos">
       <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(s?.nombre || '')}" placeholder="${esIng ? 'Salario' : 'Supermercado'}" autofocus autocomplete="off"></label>
-      <label class="campo"><span>Grupo</span><input name="grupo" value="${esc(s?.grupo || '')}" placeholder="Opcional" list="grupos-cat" autocomplete="off"></label>
+      <label class="campo"><span>Grupo</span><select name="grupo">
+        <option value="">Sin grupo</option>
+        ${grupos.map(g => `<option value="${esc(g)}" ${(s?.grupo || '').trim() === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+        <option value="__nuevo">Nuevo grupo…</option></select></label>
+      <label class="campo" data-grupo-nuevo hidden><span>Nombre del grupo</span><input name="grupo_nuevo" placeholder="Ej. Gastos fijos" autocomplete="off"></label>
       ${esIng ? '' : `<label class="campo"><span>Límite</span><input name="presupuesto" inputmode="decimal" value="${s && s.presupuesto > 0 ? s.presupuesto : ''}" placeholder="Sin límite"></label>
       <label class="campo"><span>Período</span><select name="periodo">${Object.entries(PER_CAT).map(([k, v]) => `<option value="${k}" ${(s ? perCat(s) : 'mes') === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></label>
       <label class="campo"><span>Moneda</span><select name="moneda"><option value="CRC" ${s?.moneda !== 'USD' ? 'selected' : ''}>Colones ₡</option><option value="USD" ${s?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>`}
     </div>
-    <datalist id="grupos-cat">${grupos.map(g => `<option value="${esc(g)}">`).join('')}</datalist>
     <div class="etiqueta">Color</div>${muestras('color', s?.color || '')}
     <div class="etiqueta">Ícono</div>${rejilla('icono', ICONOS_SOBRE, s?.icono || (esIng ? 'monedas' : 'carrito'))}
     <div class="acciones">
       ${s ? `<button type="button" class="btn peligro" data-accion="borrar-sobre" data-id="${s.id}" aria-label="Archivar categoría">${ico('bandeja')}</button>` : ''}
       <button type="submit" class="btn primario">Guardar</button>
     </div>`);
+  f.grupo.addEventListener('change', () => {
+    const nuevo = f.grupo.value === '__nuevo';
+    f.querySelector('[data-grupo-nuevo]').hidden = !nuevo;
+    if (nuevo) f.grupo_nuevo.focus();
+  });
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const nombre = f.nombre.value.trim();
     if (!nombre) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
-    const fila = { nombre, grupo: f.grupo.value.trim() || null, icono: valorRadio(f, 'icono') || 'carrito', tipo, color: valorRadio(f, 'color') || null };
+    let grupo = f.grupo.value;
+    if (grupo === '__nuevo') {
+      grupo = f.grupo_nuevo.value.trim();
+      if (!grupo) { f.grupo_nuevo.classList.add('mal-campo'); f.grupo_nuevo.focus(); return; }
+      grupo = grupos.find(g => g.toLowerCase() === grupo.toLowerCase()) || grupo;   // si ya existe, usa ese mismo
+    }
+    const fila = { nombre, grupo: grupo || null, icono: valorRadio(f, 'icono') || 'carrito', tipo, color: valorRadio(f, 'color') || null };
     if (!esIng) { fila.presupuesto = leerMontoCampo(f.presupuesto.value); fila.moneda = f.moneda.value; fila.periodo = f.periodo.value; }
     const lista = esIng ? S.catsIng : S.sobres;
     if (s) Object.assign(s, await api.actualizar('sobres', s.id, fila));
