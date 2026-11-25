@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sobres</title>
+  <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Sobres">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+</head>
+<body>
+  <div id="acceso" hidden></div>
+  <div id="app" hidden>
+    <main id="vista"></main>
+    <button class="fab" data-accion="nuevo" aria-label="Agregar"></button>
+    <nav class="tabs" aria-label="Secciones"></nav>
+  </div>
+  <div id="hoja" hidden></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script>
+    // supabase-js solo se carga si hay servidor configurado
+    (function () {
+      var c = window.SOBRES_CONFIG || {};
+      function arrancar() { var s = document.createElement('script'); s.type = 'module'; s.src = 'app.js'; document.body.appendChild(s); }
+      if (c.url && c.anonKey) {
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
+        s.onload = arrancar; document.head.appendChild(s);
+      } else arrancar();
+    })();
+  </script>
+</body>
+</html>
