@@ -24,7 +24,7 @@ const tipoMetodo = (m) => TIPOS_METODO[m.tipo] || TIPOS_METODO.otro;
 const ACENTOS = { verde: '#7ee8a3', azul: '#8cc8ff', morado: '#c4a8ff', naranja: '#ffc078' };
 const NOMBRE_APP = 'Whiplash';
 // Montos en los campos: coma para miles y punto para decimales (2,500,000.00)
-const SEL_MONTO = 'input[name="monto"], input[name="presupuesto"], input[name="meta"], input[name="saldo"], input[data-cfg="tipo_cambio"]';
+const SEL_MONTO = 'input[name="monto"], input[name="presupuesto"], input[name="meta"], input[name="saldo"], input[data-monto], input[data-cfg="tipo_cambio"]';
 const leerMontoCampo = (v) => {
   const n = Number(String(v || '').replace(/[^\d.]/g, ''));
   return n > 0 ? Math.round(n * 100) / 100 : 0;
@@ -63,6 +63,9 @@ const vistaActual = () => S.pila[S.pila.length - 1] || { v: S.tab };
 async function cargarTodo() {
   const sub = await api.sincronizar();   // primero sube lo que quedó guardado sin conexión
   if (sub.fallidos) toast(`${sub.fallidos} ${sub.fallidos === 1 ? 'cambio guardado sin conexión no se pudo subir' : 'cambios guardados sin conexión no se pudieron subir'}`, 5000);
+  // Si todavía queda algo por subir, lo del servidor está atrasado: no se reemplaza lo local (se perderían
+  // esos cambios de la pantalla y los cobros automáticos se anotarían dos veces). Se reintenta después.
+  if (api.pendientes()) throw new Error('quedan cambios por subir');
   const [config, sobres, metodos, gastos, reglas, subs, ahorros, ingresos, fijos, traslados] = await Promise.all(
     ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos', 'traslados'].map(t => api.listar(t)));
   S.cfg = config[0];
@@ -481,16 +484,20 @@ function estadoTarjeta(c) {
   const mon = m.moneda || 'CRC';
   const nuevas = S.gastos.filter(g => g.metodo_id === m.id && (g.estado || 'pagado') === 'pagado' && new Date(g.fecha) >= tras && Date.parse(g.fecha) >= c.desde)
     .reduce((a, g) => a + conv(g.monto, g.moneda, mon), 0);
-  const porPagar = Math.max(0, Math.round((Math.max(0, -c.saldo) - nuevas) * 100) / 100);
+  // Si la deuda se anotó después del último corte, no se sabe qué parte ya era de ese corte:
+  // el pago se empieza a calcular desde el corte siguiente, en vez de dar toda la deuda por vencida.
+  const espera = c.desde >= tras.getTime();
+  const porPagar = espera ? 0 : Math.max(0, Math.round((Math.max(0, -c.saldo) - nuevas) * 100) / 100);
   let pago = null, dias = null;
   if (dp) {
     pago = diaEnMes(corte.getFullYear(), corte.getMonth(), dp);
     if (pago <= corte) pago = diaEnMes(corte.getFullYear(), corte.getMonth() + 1, dp);
     dias = Math.round((pago - hoy) / 864e5);
   }
-  return { corte, prox, nuevas, porPagar, pago, dias, mon };
+  return { corte, prox, nuevas, porPagar, pago, dias, mon, espera };
 }
 function textoCorte(e) {
+  if (e.espera) return { t: `El monto a pagar se calcula desde el corte del ${diaMes(e.prox)}`, cls: '' };
   if (e.porPagar > 0 && e.pago) {
     if (e.dias < 0) return { t: `Pago vencido hace ${-e.dias} ${e.dias === -1 ? 'día' : 'días'}: ${fmt(e.porPagar, e.mon)}`, cls: 'mal' };
     if (e.dias === 0) return { t: `Hoy vence el pago: ${fmt(e.porPagar, e.mon)}`, cls: 'mal' };
@@ -525,7 +532,7 @@ function vistaCuentas() {
       <span class="tile">${ico(tipoMetodo(c.m)[1])}</span>
       <span class="txt"><b>${esc(c.m.nombre)}</b><small>${tipoMetodo(c.m)[0]}${pr && pr.id === c.m.id ? ' · recibe tus ingresos' : ''}</small></span>
       <span class="monto ${x.cls}">${x.t}${x.sub ? `<small>${x.sub}</small>` : ''}</span>
-      ${e ? `<span class="pie-corte"><span class="${tc.cls}">${tc.t}</span><span>Va en este corte: ${fmt(e.nuevas, e.mon)} · cierra el ${diaMes(e.prox)}</span></span>` : esCredito(c.m) ? '<span class="pie-corte"><span>Tocá para poner el día de corte y de pago</span></span>' : ''}</button>`; }).join('')}</section>
+      ${e ? `<span class="pie-corte"><span class="${tc.cls}">${tc.t}</span>${e.espera ? '' : `<span>Va en este corte: ${fmt(e.nuevas, e.mon)} · cierra el ${diaMes(e.prox)}</span>`}</span>` : esCredito(c.m) ? '<span class="pie-corte"><span>Tocá para poner el día de corte y de pago</span></span>' : ''}</button>`; }).join('')}</section>
   <div class="acciones" style="margin-top:16px"><button class="btn primario" data-accion="nuevo-traslado">${ico('traslado')} Traslado o pago de tarjeta</button></div>
   <div class="acciones" style="margin-top:10px"><button class="btn" data-accion="nueva-cuenta">${ico('mas')} Agregar cuenta o tarjeta</button></div>`
   : `<div class="vacio">${ico('billete')}<div>Activá el saldo en una cuenta o tarjeta y la app lo lleva sola: baja con cada gasto y sube con cada ingreso.</div></div>`}
@@ -755,7 +762,7 @@ function hojaRepartir(ing) {
   const f = abrirHoja('Repartir el ingreso', `
     <p class="nota" style="text-align:center;margin:0 0 12px">Entraron <b class="bien">${fmt(ing.monto, ing.moneda)}</b>. ¿Cuánto apartás para tus metas?</p>
     <div class="campos">${metas.map(a => { const x = sug(a); return `<label class="campo"><span>${esc(a.nombre)}${a.moneda !== ing.moneda ? ` (${a.moneda === 'USD' ? '$' : '₡'})` : ''}</span>
-      <input name="m_${a.id}" inputmode="decimal" value="${x ? numATexto(x) : ''}" placeholder="0"></label>`; }).join('')}</div>
+      <input name="m_${a.id}" data-monto inputmode="decimal" value="${x || ''}" placeholder="0"></label>`; }).join('')}</div>
     <div class="resultado" id="res-rep" style="margin-top:14px"></div>
     <p class="nota">Las metas con fecha ya traen lo que toca por quincena; cambiá el monto o dejalo en 0. Lo que apartés se suma a la meta y se resta de tu disponible.</p>
     <div class="acciones"><button type="button" class="btn" data-accion="cerrar">Ahora no</button><button type="submit" class="btn primario">Apartar</button></div>`);
@@ -1400,7 +1407,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 18`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 19`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1504,7 +1511,7 @@ function bloqueHistorial(s = null) {
 }
 
 const vistaMovimientos = () => `${top('Movimientos', { atras: true })}<p class="nota" style="margin:-6px 4px 6px;text-transform:capitalize">${nombreCiclo(ciclo().ini)}</p>${listaPorDia(enCiclo(ciclo()))}`;
-const vistaSinSobre = () => `${top('Sin categoría', { atras: true })}<p class="nota" style="margin:-6px 4px 6px">Tocá cada gasto para elegir su categoría. La próxima vez ese comercio entra solo.</p>${listaPorDia(S.gastos.filter(g => !g.sobre_id))}`;
+const vistaSinSobre = () => `${top('Sin categoría', { atras: true })}<p class="nota" style="margin:-6px 4px 6px">Tocá cada gasto para elegir su categoría. La próxima vez ese comercio entra solo.</p>${listaPorDia(S.gastos.filter(porClasificar))}`;
 const vistaHistorialGeneral = () => `${top('Historial', { atras: true })}${bloqueHistorial(null)}`;
 
 // ================= vistas: ajustes =================
@@ -1683,7 +1690,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 18</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 19</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1831,12 +1838,13 @@ function hojaGasto(g = null, pre = {}) {
     const cat = sobreDe(fila.sobre_id), lim = cat ? Number(cat.presupuesto) || 0 : 0;
     const antes = lim ? gastadoPer(cat) / lim : 0;
     if (g) Object.assign(g, await api.actualizar('gastos', g.id, fila));
-    else S.gastos.push(await api.insertar('gastos', { ...fila, fuente: pre.fuente || 'manual', tarjeta: pre.tarjeta || null }));
+    let creado = null;
+    if (!g) S.gastos.push(creado = await api.insertar('gastos', { ...fila, fuente: pre.fuente || 'manual', tarjeta: pre.tarjeta || null }));
     S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
     // compra en cuotas: este gasto queda como la cuota 1 y las demás se anotan solas cada mes
     const nCuotas = !g && f.cuotas ? Number(f.cuotas.value) || 0 : 0;
     let enCuotas = null;
-    if (nCuotas > 1) { const nuevo = S.gastos.find(x => x.monto === fila.monto && x.fecha === fila.fecha && !/^sub:/.test(x.nota || '')) ; if (nuevo) { enCuotas = await pasarACuotas(nuevo, nCuotas); fila.comercio = null; } }
+    if (nCuotas > 1 && creado) enCuotas = await pasarACuotas(creado, nCuotas);
     const recordar = f.recordar ? f.recordar.checked : true;
     if (fila.comercio && fila.sobre_id && recordar) await aprender(fila.comercio, fila.sobre_id);
     // repetir: queda como gasto fijo y los siguientes se anotan solos
@@ -2296,7 +2304,7 @@ function numBanco(v) {
   const n = Number(x);
   return Number.isFinite(n) ? (neg ? -n : n) : 0;
 }
-function leerEstadoCuenta(filas, monedaCta) {
+function leerEstadoCuenta(filas, monedaCta, esTarjeta = false) {
   const es = (c, re) => re.test(sinTildes(c));
   const RE = { fecha: /^fecha/, desc: /descrip|detalle|concepto|comercio|establecimiento|transaccion|movimiento/, deb: /debito|cargo|retiro|compra/, cre: /credito|abono|deposito|pago/, monto: /monto|importe|valor/ };
   let cab = -1;
@@ -2307,10 +2315,16 @@ function leerEstadoCuenta(filas, monedaCta) {
   if (cab < 0) return { error: 'No encontré una fila de encabezados con Fecha y Descripción o Monto.' };
   const h = filas[cab].map(sinTildes);
   const col = (re, no) => h.findIndex((c, i) => re.test(c) && !(no && no.test(c)) && c !== '' && i >= 0);
-  const iF = col(RE.fecha), iD = col(RE.desc, /^fecha/);
+  // la descripción: primero una columna que lo diga claro; "transacción" o "movimiento" solo si no es fecha, referencia ni código
+  const NO_DESC = /^fecha|fecha de|referencia|codigo|numero|^no\.?$|^n°|^#/;
+  const claro = col(/descrip|detalle|concepto|comercio|establecimiento/, NO_DESC);
+  const iF = col(RE.fecha), iD = claro >= 0 ? claro : col(RE.desc, NO_DESC);
   const iDeb = col(RE.deb, RE.fecha), iCre = col(RE.cre, RE.fecha);
   const montos = h.map((c, i) => ({ c, i })).filter(x => RE.monto.test(x.c) || /colones|dolares|local|usd|crc/.test(x.c)).filter(x => x.i !== iDeb && x.i !== iCre && x.i !== iF && x.i !== iD);
   const monedaDe = (c) => (/dolar|usd|\$/.test(c) ? 'USD' : /colon|crc|local|₡/.test(c) ? 'CRC' : monedaCta);
+  // Con una sola columna de monto, el signo dice si entra o sale: en una cuenta lo negativo es lo que sale;
+  // en una tarjeta de crédito lo negativo son los pagos. Sin signos, se decide por la descripción.
+  const haySignos = montos.some(x => filas.slice(cab + 1).some(f => f && numBanco(f[x.i]) < 0));
   const out = [];
   for (const f of filas.slice(cab + 1)) {
     if (!f) continue;
@@ -2326,7 +2340,7 @@ function leerEstadoCuenta(filas, monedaCta) {
     }
     if (!puesto) for (const x of montos) {
       const n = numBanco(f[x.i]);
-      if (n) out.push({ fecha, desc, monto: Math.abs(n), moneda: monedaDe(x.c), entra: pagoTxt });
+      if (n) out.push({ fecha, desc, monto: Math.abs(n), moneda: monedaDe(x.c), entra: haySignos ? (esTarjeta ? n < 0 : n > 0) : pagoTxt });
     }
   }
   return { filas: out.map(x => ({ ...x, monto: Math.round(x.monto * 100) / 100 })) };
@@ -2354,7 +2368,7 @@ async function leerArchivoBanco(archivo) {
   const m = metodoDe(S.imp.metodo), mon = m?.moneda || 'CRC';
   let mejor = { error: 'El archivo no tiene hojas con datos.' };
   for (const n of libro.SheetNames) {
-    const r = leerEstadoCuenta(X.utils.sheet_to_json(libro.Sheets[n], { header: 1, raw: true, defval: '' }), mon);
+    const r = leerEstadoCuenta(X.utils.sheet_to_json(libro.Sheets[n], { header: 1, raw: true, defval: '' }), mon, !!m && esCredito(m));
     if (r.filas && (!mejor.filas || r.filas.length > mejor.filas.length)) mejor = r;
     else if (!mejor.filas && r.error) mejor = r;
   }
@@ -2385,15 +2399,22 @@ function vistaImportar() {
   <p class="nota" style="margin-top:16px">Los gastos entran con la fecha del banco, el método elegido y la categoría que la app ya conozca para ese comercio; el resto queda en "Sin categoría". Si un mismo cobro aparece con otro monto (propina, tipo de cambio), va a salir como nuevo: desmarcalo.</p>`;
 }
 async function agregarImportados() {
+  if (S.imp.agregando) return;   // un segundo toque mientras entra la tanda no repite nada
   const l = (S.imp.filas || []).filter(x => !x.entra && !x.ya && x.sel);
-  for (const x of l) {
-    const regla = S.reglas.find(r => r.comercio === normalizarComercio(x.desc));
-    S.gastos.push(await api.insertar('gastos', { monto: x.monto, moneda: x.moneda, comercio: x.desc.slice(0, 80) || null, fecha: x.fecha.toISOString(),
-      metodo_id: S.imp.metodo || null, sobre_id: regla && sobreDe(regla.sobre_id) ? regla.sobre_id : null, fuente: 'manual', estado: 'pagado', nota: 'Importado del estado de cuenta' }));
-    x.ya = true; x.sel = false;
+  let hechos = 0;
+  S.imp.agregando = true;
+  try {
+    for (const x of l) {
+      const regla = S.reglas.find(r => r.comercio === normalizarComercio(x.desc));
+      S.gastos.push(await api.insertar('gastos', { monto: x.monto, moneda: x.moneda, comercio: x.desc.slice(0, 80) || null, fecha: x.fecha.toISOString(),
+        metodo_id: S.imp.metodo || null, sobre_id: regla && sobreDe(regla.sobre_id) ? regla.sobre_id : null, fuente: 'manual', estado: 'pagado', nota: 'Importado del estado de cuenta' }));
+      x.ya = true; x.sel = false; hechos++;
+    }
+  } finally {
+    S.imp.agregando = false;
+    S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    render(); toast(`${hechos} ${hechos === 1 ? 'gasto agregado' : 'gastos agregados'}${hechos < l.length ? ` · ${l.length - hechos} no entraron` : ''}`, hechos < l.length ? 5000 : undefined);
   }
-  S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
-  render(); toast(`${l.length} ${l.length === 1 ? 'gasto agregado' : 'gastos agregados'}`);
 }
 
 async function descargarExcel() {
@@ -2806,7 +2827,9 @@ function taparPantalla() {
     <button class="btn primario" data-abrir>Desbloquear</button><button class="enlace" data-salir>Cerrar sesión</button></div>`;
   c.querySelector('[data-abrir]').onclick = () => desbloquear();
   c.querySelector('[data-salir]').onclick = async () => {
-    if (!confirm('Se cierra la sesión en este teléfono y se quita el bloqueo. Para volver a entrar vas a necesitar tu correo y contraseña.')) return;
+    const n = api.pendientes();
+    if (!confirm(`Se cierra la sesión en este teléfono y se quita el bloqueo. Para volver a entrar vas a necesitar tu correo y contraseña.${n ? ` Además hay ${n} ${n === 1 ? 'cambio guardado' : 'cambios guardados'} sin conexión que se ${n === 1 ? 'pierde' : 'pierden'}.` : ''}`)) return;
+    if (pushActivo()) await quitarAvisos().catch(() => {});
     api.vaciarCola(); quitarBloq(); borrarCopia(); await api.salir(); location.reload();
   };
 }

@@ -68,7 +68,13 @@ function backendSupabase() {
   const sb = window.supabase.createClient(CFG.url, CFG.anonKey, {
     auth: { persistSession: true, autoRefreshToken: true },
   });
-  const chk = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
+  const chk = ({ data, error }) => {
+    if (error) { const e = new Error(error.message); e.codigo = String(error.code || ''); throw e; }
+    return data;
+  };
+  // Rechazo definitivo: el dato mismo no sirve (repetido, rompe una regla, formato o columna que no existe).
+  // Cualquier otro error del servidor puede ser pasajero y se vuelve a intentar.
+  const definitivo = (e) => /^(22|23)/.test(e?.codigo || '') || ['42703', 'PGRST204'].includes(e?.codigo);
   const mandar = async (o) => {
     if (o.op === 'insertar') {
       if (o.tabla === 'reglas_comercio') return chk(await sb.from(o.tabla).upsert(o.fila).select().single());
@@ -77,21 +83,33 @@ function backendSupabase() {
     if (o.op === 'actualizar') return chk(await sb.from(o.tabla).update(o.cambios).eq(o.campo, o.id).select())[0];
     chk(await sb.from(o.tabla).delete().eq('id', o.id));
   };
-  // Sube lo pendiente en orden. Se detiene si sigue sin señal; lo que el servidor rechaza se descarta.
+  // Sube lo pendiente en orden. Se detiene si no hay señal, si no hay sesión válida o si el servidor falla
+  // por algo pasajero. Solo se descarta lo que el servidor rechaza de forma definitiva, o lo que falló 5 veces.
   let subiendo = null;
   function sincronizar() {
     if (subiendo) return subiendo;
-    subiendo = (async () => {
+    const subir = async () => {
       let subidos = 0, fallidos = 0;
+      const c0 = leerCola();
+      if (!c0.length) return { subidos, fallidos };
+      if (c0.some(x => !x.k)) guardarCola(c0.map(x => (x.k ? x : { ...x, k: uid() })));
+      const { data } = await sb.auth.getSession().catch(() => ({ data: {} }));
+      if (!data?.session) return { subidos, fallidos };   // sin sesión no se manda: el servidor lo rechazaría todo
       for (;;) {
-        const cola = leerCola();
-        if (!cola.length) break;
-        try { await mandar(cola[0]); subidos++; }
-        catch (e) { if (sinRed(e)) break; fallidos++; }
-        guardarCola(leerCola().slice(1));
+        const o = leerCola()[0];
+        if (!o) break;
+        try { await mandar(o); subidos++; }
+        catch (e) {
+          if (sinRed(e)) break;
+          if (definitivo(e) || (o.n || 0) >= 4) fallidos++;
+          else { guardarCola(leerCola().map(x => (x.k === o.k ? { ...x, n: (x.n || 0) + 1 } : x))); break; }
+        }
+        guardarCola(leerCola().filter(x => x.k !== o.k));
       }
       return { subidos, fallidos };
-    })().finally(() => { subiendo = null; });
+    };
+    // con dos pestañas abiertas, solo una sube a la vez
+    subiendo = (navigator.locks ? navigator.locks.request('whiplash-cola', subir) : subir()).finally(() => { subiendo = null; });
     return subiendo;
   }
   // Intenta mandar; sin señal, lo deja en la cola y devuelve la fila como quedaría
@@ -100,12 +118,24 @@ function backendSupabase() {
     if (!leerCola().length) {
       try { return await mandar(o); } catch (e) { if (!sinRed(e)) throw e; }
     }
-    guardarCola([...leerCola(), o]);
+    guardarCola([...leerCola(), { ...o, k: uid() }]);
     try { backend.alEncolar && backend.alEncolar(); } catch { /* nada */ }
     return local();
   }
   const backend = {
-    async sesion() { const { data } = await sb.auth.getSession(); return data.session?.user || null; },    async entrar(email, clave) { return chk(await sb.auth.signInWithPassword({ email, password: clave })).user; },
+    async sesion() {
+      const { data } = await sb.auth.getSession().catch(() => ({ data: {} }));
+      if (data?.session?.user) return data.session.user;
+      // Sin señal no se puede renovar el permiso vencido, pero la sesión sigue guardada en el teléfono:
+      // se entra con ella para poder ver lo último y anotar sin conexión. Si la sesión se cerró de verdad, ya no está guardada.
+      try {
+        const k = Object.keys(localStorage).find(x => /^sb-.+-auth-token$/.test(x));
+        const u = k && JSON.parse(localStorage.getItem(k))?.user;
+        if (u?.id) return u;
+      } catch { /* sin storage */ }
+      return null;
+    },
+    async entrar(email, clave) { return chk(await sb.auth.signInWithPassword({ email, password: clave })).user; },
     async registrarse(email, clave) {
       const d = chk(await sb.auth.signUp({ email, password: clave, options: { emailRedirectTo: location.href } }));
       return d.session ? d.user : null; // null = hay que confirmar el correo
@@ -113,12 +143,20 @@ function backendSupabase() {
     async salir() { await sb.auth.signOut(); },
     async listar(tabla) {
       // de los gastos no se baja el texto original del aviso del banco: pesa y la app no lo muestra
-      let q = sb.from(tabla).select(tabla === 'gastos' ? 'id,user_id,sobre_id,metodo_id,monto,moneda,comercio,tarjeta,fuente,fecha,nota,creado,referencia,estado' : '*');
+      const campos = tabla === 'gastos' ? 'id,user_id,sobre_id,metodo_id,monto,moneda,comercio,tarjeta,fuente,fecha,nota,creado,referencia,estado' : '*';
       if (tabla === 'gastos' || tabla === 'ingresos' || tabla === 'traslados') {
+        // el servidor entrega como máximo 1000 filas por pedido: se piden por páginas para no perder las más viejas
         const desde = new Date(); desde.setMonth(desde.getMonth() - 14);
-        q = q.gte('fecha', desde.toISOString()).order('fecha', { ascending: false });
+        const filas = [];
+        for (let i = 0; i < 50; i++) {
+          const d = chk(await sb.from(tabla).select(campos).gte('fecha', desde.toISOString())
+            .order('fecha', { ascending: false }).order('id').range(i * 1000, i * 1000 + 999));
+          filas.push(...d);
+          if (d.length < 1000) break;
+        }
+        return filas;
       }
-      return chk(await q);
+      return chk(await sb.from(tabla).select(campos));
     },
     async insertar(tabla, fila) {
       // el id se pone aquí para que la fila exista igual aunque se guarde sin conexión
