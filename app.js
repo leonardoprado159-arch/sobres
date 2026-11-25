@@ -347,7 +347,7 @@ function vistaInicio() {
     <button class="marca-btn" data-accion="panel" aria-label="Abrir menú"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b></span></button>
     <button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>
   </header>
-  <section class="tarjeta-balance">
+  ${b.hayIngresos ? `  <section class="tarjeta-balance">
     <div class="tb-top"><span>Balance disponible</span><button class="chip-moneda oscuro" data-accion="cambiar-moneda" aria-label="Cambiar moneda">${mv} ${ico('abajo')}</button></div>
     <div class="tb-monto">${conSigno(b.disp, mv, b.disp < 0 ? '−' : '') || fmt(0, mv)}</div>
     <div class="tb-pct"><span>Disponible</span><span>${Math.round(pct * 100)}%</span></div>
@@ -356,7 +356,15 @@ function vistaInicio() {
       <div><small>${ico('sube')} Ingresos</small><b>${conSigno(b.ing, mv, '+') || fmt(0, mv)}</b></div>
       <div><small>${ico('baja')} Gastos</small><b>${conSigno(b.gas, mv, '−') || fmt(0, mv)}</b></div>
     </div>
-  </section>
+  </section>` : `<section class="tarjeta-balance">
+    <div class="tb-top"><span>${Number(S.cfg.dia_cierre) === 1 ? 'Gastado este mes' : 'Gastado este período'}</span><button class="chip-moneda oscuro" data-accion="cambiar-moneda" aria-label="Cambiar moneda">${mv} ${ico('abajo')}</button></div>
+    <div class="tb-monto">${fmt(b.gas, mv)}</div>
+    <div class="tb-pct"><span>Sin ingresos</span><span>Cierra en ${b.dias} ${b.dias === 1 ? 'día' : 'días'}</span></div>
+    <div class="tb-dos">
+      <div><small>${ico('calendario')} Por día</small><b>${fmt(b.gas / Math.max(1, Math.floor((Date.now() - c.ini) / 864e5) + 1), mv)}</b></div>
+      <div><small>${ico('historial')} Por pagar</small><b>${fmt(b.porPagar, mv)}</b></div>
+    </div>
+  </section>`}
   ${seguro}
   ${bloqueCuentas()}${bloquePagos()}${bloqueResumen()}${bloqueAlertas()}
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre" style="margin-top:12px">
@@ -1352,7 +1360,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 14`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 15`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1625,7 +1633,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 14</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 15</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
