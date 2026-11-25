@@ -56,13 +56,13 @@ const decimalesFaltan = (v) => { const i = v.indexOf(','); return !v ? '' : i < 
 // ================= estado =================
 const S = {
   cfg: null, sobres: [], metodos: [], gastos: [], reglas: [], subs: [], ahorros: [], usuario: null,
-  ingresos: [], fijos: [], mov: { filtro: 'todo', q: '' }, est: { per: 'mes', d: 0, sel: 5 },
+  ingresos: [], fijos: [], catsIng: [], catTab: 'gasto', mov: { filtro: 'todo', q: '' }, est: { per: 'mes', d: 0, sel: 5 },
   tab: 'inicio', pila: [],
 };
 const vistaActual = () => S.pila[S.pila.length - 1] || { v: S.tab };
 
 async function cargarTodo() {
-  const [config, sobres, metodos, gastos, reglas, subs, ahorros, ingresos, fijos] = await Promise.all(
+  const [config, categorías, metodos, gastos, reglas, subs, ahorros, ingresos, fijos] = await Promise.all(
     ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos'].map(t => api.listar(t)));
   S.cfg = config[0];
   if (S.cfg.dia_cierre !== 1) {
@@ -70,7 +70,9 @@ async function cargarTodo() {
     api.actualizar('config', S.cfg.user_id, { dia_cierre: 1 }, 'user_id').catch(() => {});
   }
   const orden = (a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.creado).localeCompare(String(b.creado));
-  S.sobres = sobres.filter(s => !s.archivado).sort(orden);
+  const vivas = categorías.filter(s => !s.archivado).sort(orden);
+  S.sobres = vivas.filter(s => (s.tipo || 'gasto') === 'gasto');   // categorías de gasto
+  S.catsIng = vivas.filter(s => s.tipo === 'ingreso');             // categorías de ingreso
   S.metodos = metodos.sort(orden);
   S.gastos = gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
   S.reglas = reglas; S.subs = subs; S.ahorros = ahorros.sort(orden);
@@ -109,7 +111,7 @@ const diasParaCierre = () => Math.max(0, Math.ceil((ciclo().fin - new Date()) / 
 const enCiclo = (c) => S.gastos.filter(g => { const f = new Date(g.fecha); return f >= c.ini && f < c.fin; });
 const gastadoSobre = (s, lista) => lista.filter(g => g.sobre_id === s.id).reduce((a, g) => a + conv(g.monto, g.moneda, s.moneda), 0);
 
-// Estado de un sobre: con presupuesto dice sobrante o sobregiro; sin presupuesto, solo lo gastado
+// Estado de una categoría: con presupuesto dice sobrante o sobregiro; sin presupuesto, solo lo gastado
 function estadoSobre(s, gastado) {
   const p = Number(s.presupuesto) || 0;
   if (p <= 0) return { conPres: false, etiqueta: 'gastado', monto: gastado, cls: '', aro: 'neutro', frac: 0 };
@@ -170,7 +172,7 @@ function filaGasto(g, conSobre = true) {
   const s = sobreDe(g.sobre_id), m = metodoDe(g.metodo_id);
   const f = new Date(g.fecha);
   const hora = f.toLocaleTimeString('es-CR', { hour: 'numeric', minute: '2-digit' });
-  const detalle = [hora, m ? m.nombre : FUENTES[g.fuente], conSobre ? (s ? s.nombre : '<em>Sin sobre</em>') : ''].filter(Boolean).join(' · ');
+  const detalle = [hora, m ? m.nombre : FUENTES[g.fuente], conSobre ? (s ? s.nombre : '<em>Sin categoría</em>') : ''].filter(Boolean).join(' · ');
   const otra = s && s.moneda !== g.moneda ? `<small>${fmt(conv(g.monto, g.moneda, s.moneda), s.moneda)}</small>` : '';
   return `<button class="fila" data-accion="editar-gasto" data-id="${g.id}">
     <span class="mini-ico">${ico(s ? s.icono : 'bandeja')}</span>
@@ -200,7 +202,7 @@ const conSigno = (n, moneda, s) => (Math.abs(n) < 0.005 ? '' : s) + fmt(Math.abs
 
 // Balance del ciclo: lo que realmente entró menos lo que realmente se gastó.
 // "Seguro para gastar" solo le resta lo que ya está comprometido (gastos pendientes o planeados).
-// El presupuesto de los sobres NO se resta: es un plan, no plata que ya salió.
+// El presupuesto de las categorías NO se resta: es un plan, no plata que ya salió.
 function balance(c = ciclo()) {
   const mv = S.cfg.moneda_vista, gastos = enCiclo(c), ingresos = enCicloI(c);
   const ing = ingresos.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0);
@@ -258,7 +260,7 @@ function movimientos({ filtro = 'todo', q = '', c = null } = {}) {
 function filaMovU(m) {
   const x = m.x;
   if (m.t === 'i') {
-    const sub = x.fuente === 'fijo' ? 'Ingreso fijo' : x.fuente === 'manual' ? 'Ingreso' : 'SINPE recibido';
+    const sub = catIngDe(x.categoria_id)?.nombre || (x.fuente === 'fijo' ? 'Ingreso fijo' : x.fuente === 'manual' ? 'Ingreso' : 'SINPE recibido');
     return `<button class="movu" data-accion="editar-ingreso" data-id="${x.id}">
       <span class="tile ing">${ico('monedas')}</span>
       <span class="txt"><b>${esc(x.origen || 'Ingreso')}</b><small>${sub}</small></span>
@@ -268,7 +270,7 @@ function filaMovU(m) {
   const est = x.estado && x.estado !== 'pagado' ? x.estado : '';
   return `<button class="movu ${est ? 'por-pagar' : ''}" data-accion="editar-gasto" data-id="${x.id}">
     <span class="tile">${ico(s ? s.icono : 'bandeja')}</span>
-    <span class="txt"><b>${esc(x.comercio || 'Gasto')}${est ? `<i class="marca-est ${est}" title="${est}"></i>` : ''}</b><small>${est ? (est === 'pendiente' ? 'Pendiente · ' : 'Planeado · ') : ''}${s ? esc(s.nombre) : '<em>Sin sobre</em>'}</small></span>
+    <span class="txt"><b>${esc(x.comercio || 'Gasto')}${est ? `<i class="marca-est ${est}" title="${est}"></i>` : ''}</b><small>${est ? (est === 'pendiente' ? 'Pendiente · ' : 'Planeado · ') : ''}${s ? esc(s.nombre) : '<em>Sin categoría</em>'}</small></span>
     <span class="monto">−${fmt(x.monto, x.moneda)}</span></button>`;
 }
 function listaMovs(l, vacio = 'Todavía no hay movimientos.') {
@@ -325,7 +327,7 @@ function vistaInicio() {
   </section>
   ${seguro}
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre" style="margin-top:12px">
-      ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin sobre' : 'gastos sin sobre'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
+      ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin categoría' : 'gastos sin categoría'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
   ${prox.map(({ s, d }) => `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'calendario', 44)}
       <span class="nombre">${esc(s.nombre)}<small>Se cobra ${d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${d} días`}</small></span>
       <span class="valor"><b>${fmt(s.monto, s.moneda)}</b></span></div>`).join('')}
@@ -346,7 +348,7 @@ function resMovs() {
 function vistaMovs() {
   const f = S.mov;
   return `${top('Movimientos', { derecha: `<button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>` })}
-  <label class="buscador">${ico('buscar')}<input type="search" data-buscar placeholder="Buscar comercio, sobre o nota" value="${esc(f.q)}" aria-label="Buscar movimientos" autocomplete="off"></label>
+  <label class="buscador">${ico('buscar')}<input type="search" data-buscar placeholder="Buscar comercio, categoría o nota" value="${esc(f.q)}" aria-label="Buscar movimientos" autocomplete="off"></label>
   <div class="segmento desliza" id="seg-mov" style="--n:${FILTROS_MOV.length};--i:${FILTROS_MOV.findIndex(x => x[0] === f.filtro)}" role="tablist"><span class="pill"></span>
     ${FILTROS_MOV.map(([k, t]) => `<button class="${f.filtro === k ? 'activo' : ''}" data-accion="filtro-mov" data-valor="${k}" role="tab" aria-selected="${f.filtro === k}">${t}</button>`).join('')}</div>
   <div id="res-movs">${resMovs()}</div>`;
@@ -364,7 +366,7 @@ function abrirPanel() {
       ${fila('monedas', 'Ingresos fijos', 'fijos')}
       ${fila('tarjeta', 'Métodos de pago', 'metodos')}
       ${fila('calendario', 'Gastos fijos y cuotas', 'suscripciones')}
-      ${fila('bandeja', `Gastos sin sobre${n ? ` (${n})` : ''}`, 'sinsobre')}
+      ${fila('bandeja', `Gastos sin categoría${n ? ` (${n})` : ''}`, 'sinsobre')}
       ${fila('historial', 'Historial', 'historial')}
       ${fila('descargar', 'Descargar datos', 'descargas')}
     </div>
@@ -403,7 +405,10 @@ function hojaIngreso(i = null, pre = {}) {
         <input name="monto" inputmode="decimal" placeholder="0" value="${v0.monto ?? ''}" autofocus aria-label="Monto"></div>
       ${alternarMoneda('moneda', v0.moneda || 'CRC')}
     </div>
-    <div class="campos">
+    ${S.catsIng.length ? `<div class="etiqueta">Categoría</div><div class="chips" role="radiogroup">
+      <label><input type="radio" name="cat" value="" ${!v0.categoria_id ? 'checked' : ''}><span>Sin categoría</span></label>
+      ${S.catsIng.map(k => `<label><input type="radio" name="cat" value="${k.id}" ${v0.categoria_id === k.id ? 'checked' : ''}><span>${ico(k.icono)}${esc(k.nombre)}</span></label>`).join('')}</div>` : ''}
+    <div class="campos" style="margin-top:14px">
       <label class="campo"><span>De</span><input name="origen" value="${esc(v0.origen || '')}" placeholder="Salario, cliente, persona…" autocomplete="off"></label>
       <label class="campo"><span>Fecha</span><input type="datetime-local" name="fecha" value="${local}"></label>
       <label class="campo"><span>Nota</span><input name="nota" value="${esc(esFijo ? '' : i?.nota || '')}" placeholder="Opcional"></label>
@@ -419,7 +424,7 @@ function hojaIngreso(i = null, pre = {}) {
     e.preventDefault();
     const monto = leerMontoCampo(f.monto.value);
     if (!monto) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
-    const fila = { monto, moneda: valorRadio(f, 'moneda'), origen: f.origen.value.trim() || null, fecha: new Date(f.fecha.value || Date.now()).toISOString() };
+    const fila = { monto, moneda: valorRadio(f, 'moneda'), origen: f.origen.value.trim() || null, fecha: new Date(f.fecha.value || Date.now()).toISOString(), categoria_id: valorRadio(f, 'cat') || null };
     if (!esFijo) fila.nota = f.nota.value.trim() || null;
     if (i) Object.assign(i, await api.actualizar('ingresos', i.id, fila));
     else S.ingresos.push(await api.insertar('ingresos', { ...fila, fuente: pre.fuente || 'manual', referencia: pre.referencia || null }));
@@ -482,16 +487,20 @@ function hojaFijo(x = null) {
 }
 
 // ================= estadísticas =================
-// Los colores siguen al sobre (su posición en la lista), no a su puesto en el ranking.
-// Hay 8 colores validados; si hay más sobres, del octavo en adelante se agrupan en "Otros".
+// Los colores siguen a la categoría (su posición en la lista), no a su puesto en el ranking.
+// Hay 8 colores validados; si hay más categorías, del octavo en adelante se agrupan en "Otros".
 const MAX_SERIES = 8;
 function colorDeSobre(i) {
+  // pocas categorías: un color por categoría
   if (S.sobres.length <= MAX_SERIES) return `var(--s${i + 1})`;
+  // muchas: el color va por grupo, y cada categoría sigue saliendo con su nombre en la lista
+  const grupos = [...new Set(S.sobres.map(s => (s.grupo || '').trim() || 'Sin grupo'))];
+  if (grupos.length <= MAX_SERIES) return `var(--s${grupos.indexOf((S.sobres[i].grupo || '').trim() || 'Sin grupo') + 1})`;
   return i < MAX_SERIES - 1 ? `var(--s${i + 1})` : null;
 }
 
 const PERS = [['semana', 'Semanal'], ['quincena', 'Quincenal'], ['mes', 'Mensual']];
-const SECCIONES = [['rapida', 'Vista rápida'], ['sobres', 'Gastos por sobre'], ['ingas', 'Ingresos y gastos'], ['tend', 'Tendencia de gastos'], ['futuro', 'Balance futuro'], ['comercios', 'Dónde más gastaste']];
+const SECCIONES = [['rapida', 'Vista rápida'], ['sobres', 'Gastos por categoría'], ['ingas', 'Ingresos y gastos'], ['tend', 'Tendencia de gastos'], ['futuro', 'Balance futuro'], ['comercios', 'Dónde más gastaste']];
 function cfgEst() {
   if (!S.estCfg) {
     let g = {};
@@ -536,9 +545,9 @@ function datosEst(per, d) {
     const color = colorDeSobre(i);
     if (color) filas.push({ nombre: s.nombre, icono: s.icono, v: suma(l), color, lista: l }); else otros = otros.concat(l);
   });
-  if (otros.length) filas.push({ nombre: 'Otros sobres', icono: 'lista', v: suma(otros), color: 'var(--s-otros)', lista: otros });
+  if (otros.length) filas.push({ nombre: 'Otras categorías', icono: 'lista', v: suma(otros), color: 'var(--s-otros)', lista: otros });
   const sin = lista.filter(g => !sobreDe(g.sobre_id));
-  if (sin.length) filas.push({ nombre: 'Sin sobre', icono: 'bandeja', v: suma(sin), color: 'var(--s-sin)', lista: sin });
+  if (sin.length) filas.push({ nombre: 'Sin categoría', icono: 'bandeja', v: suma(sin), color: 'var(--s-sin)', lista: sin });
   filas.sort((a, b) => b.v - a.v);
   const total = suma(lista);
 
@@ -647,12 +656,12 @@ function vistaEst() {
   ${ver.rapida ? `<h3 class="h-est">Vista rápida</h3>
   <div class="tiles-est">
     ${tile('promedio', 'moneda', 'azul', 'Promedio de gasto diario', fmt(r.promedio, mv))}
-    ${tile('top', r.top ? r.top.icono : 'carrito', 'ing', 'Sobre con más gasto', r.top ? esc(r.top.nombre) : '—')}
+    ${tile('top', r.top ? r.top.icono : 'carrito', 'ing', 'Categoría con más gasto', r.top ? esc(r.top.nombre) : '—')}
     ${tile('dia', 'calendario', 'morado', 'Día que más gastás', r.diaTop ? r.diaTop.nombre.replace(/^./, c => c.toUpperCase()) : '—')}
     ${tile('anterior', r.cambio != null && r.cambio < 0 ? 'baja' : 'sube', 'naranja', 'Contra el período anterior', cambio)}
   </div>` : ''}
 
-  ${ver.sobres ? `<h3 class="h-est">Gastos por sobre</h3>
+  ${ver.sobres ? `<h3 class="h-est">Gastos por categoría</h3>
   ${e.filas.length ? `<section class="tarjeta-est">
     ${dona(e.filas, e.total, mv)}
     <div class="est-lista">
@@ -689,7 +698,7 @@ function vistaEst() {
     <small class="sub-est">Proyección a 90 días, al ritmo de tus últimos ${Math.min(90, e.diasHist)} días</small>
     ${linea(e.futuro.map(x => ({ v: x.v, etiqueta: x.n ? x.n + 'd' : 'Hoy' })), { color: 'var(--s1)', area: true, alto: 150 })}
     <div class="fila-futuro"><span>Proyectado en 90 días</span><b class="${fin < 0 ? 'mal' : 'bien'}">${fin < 0 ? '−' : ''}${fmt(Math.abs(fin), mv)}</b></div>
-    <p class="nota" style="margin:8px 0 0">${e.netoDia >= 0 ? 'Te quedan' : 'Se te van'} unos ${fmt(Math.abs(e.netoDia), mv)} por día. No toma en cuenta los presupuestos de los sobres.</p>
+    <p class="nota" style="margin:8px 0 0">${e.netoDia >= 0 ? 'Te quedan' : 'Se te van'} unos ${fmt(Math.abs(e.netoDia), mv)} por día. No toma en cuenta los presupuestos de las categorías.</p>
   </section>` : ''}
 
   ${ver.comercios && e.comercios.length ? `<h3 class="h-est">Dónde más gastaste</h3>
@@ -733,40 +742,101 @@ function hojaPersonalizar() {
     <div class="acciones"><button type="button" class="btn primario" data-accion="cerrar">Listo</button></div>`);
 }
 
+// Categorías sugeridas: [nombre, ícono, grupo, tipo]
+const SUGERIDAS = [
+  ['Supermercado', 'carrito', 'Comida y bebida', 'gasto'],
+  ['Comidas fuera (sodas, restaurantes)', 'comida', 'Comida y bebida', 'gasto'],
+  ['Repostería / golosinas', 'dulce', 'Comida y bebida', 'gasto'],
+  ['Bares y salidas', 'copa', 'Comida y bebida', 'gasto'],
+  ['Telefonía e internet', 'celular', 'Hogar y servicios', 'gasto'],
+  ['Electricidad', 'luz', 'Hogar y servicios', 'gasto'],
+  ['Hogar y ferretería', 'casa', 'Hogar y servicios', 'gasto'],
+  ['Transporte (Uber / bus)', 'carro', 'Transporte', 'gasto'],
+  ['Educación', 'libro', 'Estilo de vida', 'gasto'],
+  ['Videojuegos y streaming', 'juego', 'Estilo de vida', 'gasto'],
+  ['Cuotas tasa cero', 'tarjeta', 'Tarjeta y finanzas', 'gasto'],
+  ['Seguro voluntario de la tarjeta', 'escudo', 'Tarjeta y finanzas', 'gasto'],
+  ['Salario', 'maletin', 'Ingresos principales', 'ingreso'],
+  ['Trabajos extra', 'magia', 'Ingresos principales', 'ingreso'],
+  ['Bonos y aguinaldo', 'regalo', 'Ingresos principales', 'ingreso'],
+  ['SINPE recibido', 'sinpe', 'Otros ingresos', 'ingreso'],
+  ['Otros ingresos', 'monedas', 'Otros ingresos', 'ingreso'],
+];
+const mismaCat = (a, b) => normalizarComercio(a) === normalizarComercio(b);
+const faltanSugeridas = (tipo) => SUGERIDAS.filter(x => x[3] === tipo && ![...S.sobres, ...S.catsIng].some(s => mismaCat(s.nombre, x[0])));
+const catIngDe = (id) => S.catsIng.find(c => c.id === id);
+
+// agrupa una lista de categorías por su grupo, respetando el orden en que aparecen
+function porGrupo(cats) {
+  const m = new Map();
+  for (const c of cats) { const g = (c.grupo || '').trim() || 'Sin grupo'; if (!m.has(g)) m.set(g, []); m.get(g).push(c); }
+  return [...m.entries()];
+}
+
 function vistaSobres() {
-  const c = ciclo(), lista = enCiclo(c), mv = S.cfg.moneda_vista;
-  const total = S.sobres.filter(s => s.presupuesto > 0).reduce((a, s) => a + conv(s.presupuesto - gastadoSobre(s, lista), s.moneda, mv), 0);
+  const c = ciclo(), lista = enCiclo(c), mv = S.cfg.moneda_vista, tab = S.catTab || 'gasto';
+  const faltan = faltanSugeridas(tab).length;
+  const cab = `${top('Categorías', { derecha: `<button class="redondo" data-accion="${tab === 'gasto' ? 'nuevo-sobre' : 'nueva-cat-ing'}" aria-label="Nueva categoría">${ico('mas')}</button>` })}
+  <div class="segmento desliza" id="seg-cat" style="--n:2;--i:${tab === 'gasto' ? 0 : 1};margin-bottom:14px" role="tablist"><span class="pill"></span>
+    <button class="${tab === 'gasto' ? 'activo' : ''}" data-accion="cat-tab" data-valor="gasto" role="tab" aria-selected="${tab === 'gasto'}">Gastos</button>
+    <button class="${tab === 'ingreso' ? 'activo' : ''}" data-accion="cat-tab" data-valor="ingreso" role="tab" aria-selected="${tab === 'ingreso'}">Ingresos</button></div>`;
+  const sugerir = faltan ? `<button class="item punteado" data-accion="cat-sugeridas" data-valor="${tab}" style="margin-top:12px">${ico('magia')} Agregar ${faltan} ${faltan === 1 ? 'categoría sugerida' : 'categorías sugeridas'}</button>` : '';
+
+  if (tab === 'ingreso') {
+    const ing = enCicloI(c);
+    const total = ing.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0);
+    const sinCat = ing.filter(i => !catIngDe(i.categoria_id));
+    return `${cab}
+    <div class="destacada"><div class="lado"><small>Recibido este mes</small><b>${fmt(total, mv)}</b></div>
+      <div class="lado der"><small>${ing.length} ${ing.length === 1 ? 'ingreso' : 'ingresos'}</small></div></div>
+    ${porGrupo(S.catsIng).map(([g, cats]) => `<div class="grupo-cat">${esc(g)}</div><section class="pila">
+      ${cats.map(k => {
+        const l = ing.filter(i => i.categoria_id === k.id), v = l.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0);
+        return `<button class="item" data-accion="editar-cat-ing" data-id="${k.id}">${anillo(total > 0 ? v / total : 0, v > 0 ? '' : 'neutro', k.icono)}
+          <span class="nombre">${esc(k.nombre)}<small>${l.length} este mes</small></span>
+          <span class="valor"><b class="${v > 0 ? 'bien' : ''}">${fmt(v, mv)}</b><span>recibido</span></span></button>`;
+      }).join('')}</section>`).join('')}
+    ${sinCat.length ? `<div class="grupo-cat">Sin categoría</div><section class="pila"><div class="item">${anillo(0, 'neutro', 'bandeja')}
+      <span class="nombre">Ingresos sin categoría<small>${sinCat.length} este mes</small></span>
+      <span class="valor"><b>${fmt(sinCat.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0), mv)}</b><span>recibido</span></span></div></section>` : ''}
+    ${S.catsIng.length ? '' : `<div class="vacio">${ico('monedas')}<div>Todavía no hay categorías de ingreso.</div></div>`}
+    ${sugerir}`;
+  }
+
+  const gastado = lista.reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
+  const presup = S.sobres.reduce((a, s) => a + conv(s.presupuesto, s.moneda, mv), 0);
   const pendientes = S.gastos.filter(g => !g.sobre_id && new Date(g.fecha) >= c.ini).length;
-  const prox = S.subs.filter(s => s.activa).map(s => ({ s, d: Math.round((proximoCobro(s) - new Date().setHours(0, 0, 0, 0)) / 864e5) })).filter(x => x.d <= 2);
-  return `
-  ${top('Sobres', { derecha: `<button class="redondo" data-accion="menu" aria-label="Más opciones">${ico('puntos')}</button>` })}
+  return `${cab}
   <div class="destacada">
-    <div class="lado">
-      <button class="chip-moneda" data-accion="cambiar-moneda" aria-label="Cambiar moneda">${mv} ${ico('abajo')}</button>
-      <small style="margin-top:6px">Cierra en ${diasParaCierre()} ${diasParaCierre() === 1 ? 'día' : 'días'}</small>
-    </div>
-    <div class="lado der"><small>${total < 0 ? 'Sobregiro total' : 'Sobrante total'}</small><b class="${total < 0 ? 'mal' : ''}">${fmt(Math.abs(total), mv)}</b></div>
+    <div class="lado"><small>Gastado este mes</small><b>${fmt(gastado, mv)}</b></div>
+    <div class="lado der"><small>${presup > 0 ? 'Presupuestado' : 'Cierra en'}</small><b style="font-size:19px">${presup > 0 ? fmt(presup, mv) : diasParaCierre() + ' días'}</b></div>
   </div>
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre">
-      ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin sobre' : 'gastos sin sobre'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
-  ${prox.map(({ s, d }) => `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'calendario', 44)}
-      <span class="nombre">${esc(s.nombre)}<small>Se cobra ${d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${d} días`}</small></span>
-      <span class="valor"><b>${fmt(s.monto, s.moneda)}</b></span></div>`).join('')}
-  ${pendientes || prox.length ? '<div style="height:18px"></div>' : ''}
-  <div class="separador"></div>
-  <section class="pila">
-    ${S.sobres.map(s => {
+      ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin categoría' : 'gastos sin categoría'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
+  ${porGrupo(S.sobres).map(([g, cats]) => `<div class="grupo-cat">${esc(g)}</div><section class="pila">
+    ${cats.map(s => {
       const e = estadoSobre(s, gastadoSobre(s, lista));
       return `<button class="item" data-accion="abrir-sobre" data-id="${s.id}">
         ${anillo(e.frac, e.aro, s.icono)}
-        <span class="nombre">${esc(s.nombre)}${e.conPres ? `<small>Presupuesto ${fmt(s.presupuesto, s.moneda)}</small>` : '<small>Sin presupuesto</small>'}</span>
+        <span class="nombre">${esc(s.nombre)}${e.conPres ? `<small>Presupuesto ${fmt(s.presupuesto, s.moneda)}</small>` : ''}</span>
         <span class="valor"><b class="${e.cls}">${fmt(e.monto, s.moneda)}</b><span>${e.etiqueta}</span></span>
       </button>`;
-    }).join('')}
-    <button class="item punteado" data-accion="nuevo-sobre">${ico('mas')} Nuevo sobre</button>
-    <button class="item" data-accion="ir" data-v="suscripciones">${anillo(1, 'neutro', 'calendario')}
-      <span class="nombre">Gastos fijos y cuotas<small>${S.subs.filter(s => s.activa).length} activos</small></span>${ico('derecha', 'fin')}</button>
-  </section>`;
+    }).join('')}</section>`).join('')}
+  ${S.sobres.length ? '' : `<div class="vacio">${ico('carrito')}<div>Todavía no hay categorías de gasto.</div></div>`}
+  ${sugerir}
+  <div class="grupo-cat">Recurrentes</div>
+  <section class="pila"><button class="item" data-accion="ir" data-v="suscripciones">${anillo(1, 'neutro', 'calendario')}
+      <span class="nombre">Gastos fijos y cuotas<small>${S.subs.filter(s => s.activa).length} activos</small></span>${ico('derecha', 'fin')}</button></section>`;
+}
+
+async function agregarSugeridas(tipo) {
+  const nuevas = faltanSugeridas(tipo);
+  let orden = S.sobres.length + S.catsIng.length;
+  for (const [nombre, icono, grupo] of nuevas) {
+    const fila = await api.insertar('sobres', { nombre, icono, grupo, tipo, presupuesto: 0, moneda: 'CRC', orden: orden++ });
+    (tipo === 'ingreso' ? S.catsIng : S.sobres).push(fila);
+  }
+  render(); toast(`${nuevas.length} categorías agregadas`);
 }
 
 function vistaAhorros() {
@@ -777,7 +847,7 @@ function vistaAhorros() {
       ${anillo(a.meta > 0 ? a.ahorrado / a.meta : 0, a.ahorrado > 0 ? '' : 'neutro', a.icono)}
       <span class="nombre">${esc(a.nombre)}${a.meta > 0 ? `<small>Meta ${fmt(a.meta, a.moneda)}</small>` : ''}</span>
       <span class="valor"><b class="bien">${fmt(a.ahorrado, a.moneda)}</b><span>ahorrados</span></span></button>`).join('')}
-    ${S.ahorros.length ? '' : `<div class="vacio">${ico('alcancia')}<div>Creá un sobre de ahorro con el botón ＋.<br>Le podés poner meta y pasarle el sobrante de tus sobres.</div></div>`}
+    ${S.ahorros.length ? '' : `<div class="vacio">${ico('alcancia')}<div>Creá una meta de ahorro con el botón ＋.<br>Le podés poner meta y pasarle el sobrante de tus categorías.</div></div>`}
   </section>`;
 }
 
@@ -819,7 +889,7 @@ function vistaAjustes() {
   ${top('Configuración', { atras: true })}
   <div class="titulo">Cuenta</div>
   <div class="grupo">${filaAjuste('usuario', 'Cuenta', 'cuenta')}</div>
-  <div class="titulo">Sobres</div>
+  <div class="titulo">Categorías</div>
   <div class="grupo">
     ${filaAjuste('moneda', 'Monedas', 'monedas', S.cfg.moneda_vista)}
     ${filaAjuste('tarjeta', 'Métodos de pago', 'metodos', S.metodos.length || '')}
@@ -857,7 +927,7 @@ function vistaSobre(p) {
   return `
   <header class="top">
     <button class="redondo" data-accion="atras" aria-label="Volver">${ico('izquierda')}</button>
-    <button class="redondo" data-accion="menu-sobre" data-id="${s.id}" aria-label="Opciones del sobre">${ico('puntos')}</button>
+    <button class="redondo" data-accion="menu-sobre" data-id="${s.id}" aria-label="Opciones de la categoría">${ico('puntos')}</button>
   </header>
   <div class="tarjeta-sobre">
     <h2><span class="ico-sobre ${e.cls === 'mal' ? 'mal' : ''}">${ico(s.icono)}</span>${esc(s.nombre)}</h2>
@@ -881,7 +951,7 @@ function abrirMenuSobre(s) {
     <button role="menuitem" data-accion="presupuesto" data-id="${s.id}">${e.conPres ? 'Cambiar presupuesto' : 'Poner presupuesto'} ${ico('moneda')}</button>
     ${e.cls === 'bien' && e.monto > 0 ? `<button role="menuitem" data-accion="sobrante-ahorro" data-id="${s.id}">Pasar sobrante a ahorro ${ico('alcancia')}</button>` : ''}
     <button role="menuitem" data-accion="seg" data-seg="hist">Ver historial ${ico('historial')}</button>
-    <button role="menuitem" data-accion="editar-sobre" data-id="${s.id}">Editar sobre ${ico('pincel')}</button></div>`;
+    <button role="menuitem" data-accion="editar-sobre" data-id="${s.id}">Editar categoría ${ico('pincel')}</button></div>`;
   capa.id = 'menu'; document.body.appendChild(capa);
 }
 
@@ -923,7 +993,7 @@ function bloqueHistorial(s = null) {
 }
 
 const vistaMovimientos = () => `${top('Movimientos', { atras: true })}<p class="nota" style="margin:-6px 4px 6px;text-transform:capitalize">${nombreCiclo(ciclo().ini)}</p>${listaPorDia(enCiclo(ciclo()))}`;
-const vistaSinSobre = () => `${top('Sin sobre', { atras: true })}<p class="nota" style="margin:-6px 4px 6px">Tocá cada gasto para elegir su sobre. La próxima vez ese comercio entra solo.</p>${listaPorDia(S.gastos.filter(g => !g.sobre_id))}`;
+const vistaSinSobre = () => `${top('Sin categoría', { atras: true })}<p class="nota" style="margin:-6px 4px 6px">Tocá cada gasto para elegir su categoría. La próxima vez ese comercio entra solo.</p>${listaPorDia(S.gastos.filter(g => !g.sobre_id))}`;
 const vistaHistorialGeneral = () => `${top('Historial', { atras: true })}${bloqueHistorial(null)}`;
 
 // ================= vistas: ajustes =================
@@ -947,7 +1017,7 @@ function vistaMonedas() {
   <div class="titulo" style="margin-top:26px">Tipo de cambio</div>
   <div class="campos"><label class="campo"><span>₡ por $1</span>
     <input type="text" inputmode="decimal" value="${numATexto(S.cfg.tipo_cambio)}" data-cfg="tipo_cambio"></label></div>
-  <p class="nota">Cada sobre tiene su moneda. Un gasto en dólares que cae en un sobre en colones se convierte con este tipo de cambio.</p>`;
+  <p class="nota">Cada categoría tiene su moneda. Un gasto en dólares que cae en una categoría en colones se convierte con este tipo de cambio.</p>`;
 }
 
 function vistaMetodos() {
@@ -960,28 +1030,28 @@ function vistaMetodos() {
       <span class="txt"><b>${esc(m.nombre)}</b><small>${[m.ultimos4 ? '•••• ' + m.ultimos4 : tipoMetodo(m)[0], m.sobre_id ? 'Sobre: ' + esc(sobreDe(m.sobre_id)?.nombre || '') : ''].filter(Boolean).join(' · ')}</small></span>${ico('derecha', 'fin')}</button>`).join('')}
     <button class="fila" data-accion="nuevo-metodo" style="color:var(--bien)">${ico('mas')}<span class="txt"><b>Agregar otro método</b></span></button>
   </div>
-  <p class="nota">Las tarjetas que usés con Apple Pay se agregan solas aquí la primera vez que pagás con ellas. Tocá una para ponerle un sobre: todo lo que pagués con esa tarjeta cae ahí sin preguntar.</p>`;
+  <p class="nota">Las tarjetas que usés con Apple Pay se agregan solas aquí la primera vez que pagás con ellas. Tocá una para ponerle una categoría: todo lo que pagués con esa tarjeta cae ahí sin preguntar.</p>`;
 }
 
 function vistaReinicio() {
   return `${top('Reinicio automático', { atras: true })}
   <div class="campos"><label class="campo"><span>Día de reinicio</span>
     <select data-cfg="dia_cierre">${Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}" ${S.cfg.dia_cierre === i + 1 ? 'selected' : ''}>${i + 1} de cada mes</option>`).join('')}</select></label></div>
-  <p class="nota">Ese día todos los sobres vuelven a tener su presupuesto completo. Lo gastado queda guardado en el historial de cada sobre. Si te pagan el 15, poné 15.</p>`;
+  <p class="nota">Ese día todas las categorías vuelven a tener su presupuesto completo. Lo gastado queda guardado en el historial de cada categoría. Si te pagan el 15, poné 15.</p>`;
 }
 
 function vistaApplePay() {
   const id = S.cfg.atajo_sobre_id;
   return `${top('Apple Pay', { atras: true })}
-  <div class="titulo">Sobre al pagar</div>
+  <div class="titulo">Categoría al pagar</div>
   <div class="grupo" role="radiogroup">
-    ${opcion('cfg-atajo-sobre', '', 'Sin sobre fijo', !id, ico('lista'))}
+    ${opcion('cfg-atajo-sobre', '', 'Sin categoría fija', !id, ico('lista'))}
     ${S.sobres.map(s => opcion('cfg-atajo-sobre', s.id, esc(s.nombre), id === s.id, ico(s.icono))).join('')}
   </div>
   <div style="height:12px"></div>
-  <div class="campos"><label class="campo"><span style="color:var(--tinta)">Recordar el sobre de cada comercio</span>
+  <div class="campos"><label class="campo"><span style="color:var(--tinta)">Recordar la categoría de cada comercio</span>
     <span class="interruptor"><input type="checkbox" data-cfg-bool="atajo_recordar" ${S.cfg.atajo_recordar ? 'checked' : ''}><span></span></span></label></div>
-  <p class="nota">${id ? 'Todo lo que pagués con Apple Pay cae en este sobre.' : 'El pago se registra solo. Si la app ya conoce el comercio o la tarjeta tiene sobre propio, cae ahí; si no, queda en "Sin sobre". Para que te pregunte el sobre en el momento de pagar, seguí los pasos de más abajo.'}</p>
+  <p class="nota">${id ? 'Todo lo que pagués con Apple Pay cae en esta categoría.' : 'El pago se registra solo. Si la app ya conoce el comercio o la tarjeta tiene categoría propia, cae ahí; si no, queda en "Sin categoría". Para que te pregunte la categoría en el momento de pagar, seguí los pasos de más abajo.'}</p>
   <div class="titulo" style="margin-top:26px">Configurar el atajo (una sola vez)</div>
   ${datosAtajo()}
   ${estadoAtajo()}
@@ -991,19 +1061,19 @@ function vistaApplePay() {
     <div class="paso"><b>Una sola acción</b>Tocá "Nueva automatización en blanco", buscá <code>Obtener contenido de URL</code> y pegá la Dirección de arriba donde dice URL.</div>
     <div class="paso"><b>Método POST</b>Tocá la flecha ⌄ de la acción y cambiá Método a <code>POST</code>. Dejá "Cuerpo de la solicitud" en JSON.</div>
     <div class="paso"><b>Cuatro campos de texto</b>Con "Agregar campo nuevo → Texto":<br><code>token</code> → pegá tu Token<br><code>monto</code> → tocá el valor, elegí Entrada del atajo → Importe<br><code>comercio</code> → Entrada del atajo → Comercio<br><code>tarjeta</code> → Entrada del atajo → Tarjeta o pase</div>
-    <div class="paso"><b>Listo</b>Tocá OK. La fecha la pone la app sola. Al pagar, el gasto aparece en su sobre o en "Sin sobre".</div>
+    <div class="paso"><b>Listo</b>Tocá OK. La fecha la pone la app sola. Al pagar, el gasto aparece en su categoría o en "Sin categoría".</div>
   </div>
-  <div class="titulo" style="margin-top:26px">Que pregunte el sobre al pagar</div>
-  <p class="nota" style="margin:0 4px 12px">El pago se guarda de una vez y enseguida te sale la lista de sobres, con el sugerido de primero. Si no elegís nada, el gasto queda guardado sin sobre.</p>
+  <div class="titulo" style="margin-top:26px">Que pregunte la categoría al pagar</div>
+  <p class="nota" style="margin:0 4px 12px">El pago se guarda de una vez y enseguida te sale la lista de categorías, con el sugerido de primero. Si no elegís nada, el gasto queda guardado sin categoría.</p>
   <div class="pasos">
     <div class="paso"><b>Un campo más</b>En la acción que ya tenés, agregá un quinto campo de texto: <code>preguntar</code> con el valor <code>1</code>.</div>
     <div class="paso"><b>Sacar la lista</b>Debajo agregá la acción <code>Obtener valor del diccionario</code>. Dejala en "Valor", y en Clave escribí <code>opciones</code>.</div>
     <div class="paso"><b>Mostrar la lista</b>Agregá la acción <code>Seleccionar de la lista</code>. Se conecta sola con el paso anterior.</div>
-    <div class="paso"><b>Mandar el sobre elegido</b>Agregá otra <code>Obtener contenido de URL</code> con la misma Dirección, Método <code>POST</code> y dos campos de texto: <code>token</code> → tu Token, y <code>sobre</code> → Elemento seleccionado.</div>
+    <div class="paso"><b>Mandar la categoría elegida</b>Agregá otra <code>Obtener contenido de URL</code> con la misma Dirección, Método <code>POST</code> y dos campos de texto: <code>token</code> → tu Token, y <code>sobre</code> → Elemento seleccionado.</div>
   </div>
   <div class="titulo" style="margin-top:26px">Opcional: ver un aviso</div>
   <div class="pasos">
-    <div class="paso"><b>Notificación con el resultado</b>Al final agregá <code>Obtener valor del diccionario</code> con la clave <code>mensaje</code> y luego <code>Mostrar notificación</code>. Te dice el sobre y cuánto queda.</div>
+    <div class="paso"><b>Notificación con el resultado</b>Al final agregá <code>Obtener valor del diccionario</code> con la clave <code>mensaje</code> y luego <code>Mostrar notificación</code>. Te dice la categoría y cuánto queda.</div>
   </div>`;
 }
 
@@ -1060,7 +1130,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por sobres · versión 3</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 3</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1071,7 +1141,7 @@ const VISTAS = {
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
   avisos: vistaAvisos, personalizacion: vistaPersonalizacion, acerca: vistaAcerca, descargas: vistaDescargas,
 };
-const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Sobres'], ['ahorros', 'alcancia', 'Ahorros'], ['est', 'barras', 'Análisis'], ['movs', 'buscar', 'Buscar']];
+const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Categorías'], ['ahorros', 'alcancia', 'Ahorros'], ['est', 'barras', 'Análisis'], ['movs', 'buscar', 'Buscar']];
 
 function render(animar = false) {
   const v = vistaActual();
@@ -1130,7 +1200,7 @@ function cerrarHoja() {
   setTimeout(() => { if (!h.classList.contains('abierta')) { h.hidden = true; h.innerHTML = ''; } }, 250);
 }
 
-const chipsSobre = (nombre, sel, primera = 'Sin sobre') => `<div class="chips" role="radiogroup">
+const chipsSobre = (nombre, sel, primera = 'Sin categoría') => `<div class="chips" role="radiogroup">
   <label><input type="radio" name="${nombre}" value="" ${!sel ? 'checked' : ''}><span>${primera}</span></label>
   ${S.sobres.map(s => `<label><input type="radio" name="${nombre}" value="${s.id}" ${sel === s.id ? 'checked' : ''}><span>${ico(s.icono)}${esc(s.nombre)}</span></label>`).join('')}</div>`;
 const alternarMoneda = (nombre, sel) => `<div class="alternar" role="radiogroup" aria-label="Moneda">
@@ -1150,7 +1220,7 @@ function hojaGasto(g = null, pre = {}) {
         <input name="monto" inputmode="decimal" placeholder="0" value="${base.monto ?? ''}" autofocus aria-label="Monto"></div>
       ${alternarMoneda('moneda', base.moneda)}
     </div>
-    <div class="etiqueta">Sobre</div>${chipsSobre('sobre', base.sobre_id)}
+    <div class="etiqueta">Categoría</div>${chipsSobre('sobre', base.sobre_id)}
     ${S.metodos.length ? `<div class="etiqueta">Método de pago</div><div class="chips" role="radiogroup">
       <label><input type="radio" name="metodo" value="" ${!base.metodo_id ? 'checked' : ''}><span>Ninguno</span></label>
       ${S.metodos.map(m => `<label><input type="radio" name="metodo" value="${m.id}" ${base.metodo_id === m.id ? 'checked' : ''}><span>${ico(tipoMetodo(m)[1])}${esc(m.nombre)}</span></label>`).join('')}</div>` : ''}
@@ -1160,7 +1230,7 @@ function hojaGasto(g = null, pre = {}) {
       <label class="campo"><span>Comercio</span><input name="comercio" value="${esc(base.comercio || '')}" placeholder="Opcional" list="comercios" autocomplete="off"></label>
       <label class="campo"><span>Fecha</span><input type="datetime-local" name="fecha" value="${local}"></label>
       <label class="campo"><span>Nota</span><input name="nota" value="${esc(/^(sub|ahorro):/.test(base.nota || '') ? '' : base.nota || '')}" placeholder="Opcional"></label>
-      ${automatico && g.comercio ? `<label class="campo"><span style="color:var(--tinta)">Recordar sobre para este comercio</span><span class="interruptor"><input type="checkbox" name="recordar" checked><span></span></span></label>` : ''}
+      ${automatico && g.comercio ? `<label class="campo"><span style="color:var(--tinta)">Recordar categoría para este comercio</span><span class="interruptor"><input type="checkbox" name="recordar" checked><span></span></span></label>` : ''}
     </div>
     <datalist id="comercios">${[...new Set(S.gastos.map(x => x.comercio).filter(Boolean))].slice(0, 80).map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     ${automatico ? `<p class="nota">Registrado por ${FUENTES[g.fuente]}${g.tarjeta ? ' · tarjeta •••• ' + esc(g.tarjeta) : ''}</p>` : ''}
@@ -1197,7 +1267,7 @@ function hojaGasto(g = null, pre = {}) {
   });
 }
 
-// Memoria comercio -> sobre; acomoda también los otros gastos sin sobre de ese comercio
+// Memoria comercio -> categoría; acomoda también los otros gastos sin categoría de ese comercio
 async function aprender(comercio, sobreId) {
   const r = { comercio: normalizarComercio(comercio), sobre_id: sobreId };
   if (!r.comercio) return;
@@ -1212,26 +1282,33 @@ function rejilla(nombre, lista, sel) {
   return `<div class="rejilla-iconos" role="radiogroup" aria-label="Ícono">${lista.map(i => `<label><input type="radio" name="${nombre}" value="${i}" ${sel === i ? 'checked' : ''} aria-label="${i}"><span>${ico(i)}</span></label>`).join('')}</div>`;
 }
 
-function hojaSobre(s = null) {
-  const f = abrirHoja(s ? 'Editar sobre' : 'Nuevo sobre', `
+function hojaSobre(s = null, tipo = null) {
+  tipo = tipo || s?.tipo || 'gasto';
+  const esIng = tipo === 'ingreso';
+  const grupos = [...new Set([...(esIng ? S.catsIng : S.sobres).map(x => (x.grupo || '').trim()), ...SUGERIDAS.filter(x => x[3] === tipo).map(x => x[2])].filter(Boolean))];
+  const f = abrirHoja(s ? 'Editar categoría' : esIng ? 'Nueva categoría de ingreso' : 'Nueva categoría de gasto', `
     <div class="campos">
-      <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(s?.nombre || '')}" placeholder="Supermercado" autofocus></label>
-      <label class="campo"><span>Presupuesto</span><input name="presupuesto" inputmode="decimal" value="${s && s.presupuesto > 0 ? s.presupuesto : ''}" placeholder="Sin presupuesto"></label>
-      <label class="campo"><span>Moneda</span><select name="moneda"><option value="CRC" ${s?.moneda !== 'USD' ? 'selected' : ''}>Colones ₡</option><option value="USD" ${s?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>
+      <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(s?.nombre || '')}" placeholder="${esIng ? 'Salario' : 'Supermercado'}" autofocus autocomplete="off"></label>
+      <label class="campo"><span>Grupo</span><input name="grupo" value="${esc(s?.grupo || '')}" placeholder="Opcional" list="grupos-cat" autocomplete="off"></label>
+      ${esIng ? '' : `<label class="campo"><span>Presupuesto</span><input name="presupuesto" inputmode="decimal" value="${s && s.presupuesto > 0 ? s.presupuesto : ''}" placeholder="Sin presupuesto"></label>
+      <label class="campo"><span>Moneda</span><select name="moneda"><option value="CRC" ${s?.moneda !== 'USD' ? 'selected' : ''}>Colones ₡</option><option value="USD" ${s?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>`}
     </div>
-    <div class="etiqueta">Ícono</div>${rejilla('icono', ICONOS_SOBRE, s?.icono || 'carrito')}
+    <datalist id="grupos-cat">${grupos.map(g => `<option value="${esc(g)}">`).join('')}</datalist>
+    <div class="etiqueta">Ícono</div>${rejilla('icono', ICONOS_SOBRE, s?.icono || (esIng ? 'monedas' : 'carrito'))}
     <div class="acciones">
-      ${s ? `<button type="button" class="btn peligro" data-accion="borrar-sobre" data-id="${s.id}" aria-label="Eliminar sobre">${ico('basura')}</button>` : ''}
+      ${s ? `<button type="button" class="btn peligro" data-accion="borrar-sobre" data-id="${s.id}" aria-label="Eliminar categoría">${ico('basura')}</button>` : ''}
       <button type="submit" class="btn primario">Guardar</button>
     </div>`);
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const nombre = f.nombre.value.trim();
     if (!nombre) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
-    const fila = { nombre, presupuesto: leerMontoCampo(f.presupuesto.value), moneda: f.moneda.value, icono: valorRadio(f, 'icono') || 'carrito' };
+    const fila = { nombre, grupo: f.grupo.value.trim() || null, icono: valorRadio(f, 'icono') || 'carrito', tipo };
+    if (!esIng) { fila.presupuesto = leerMontoCampo(f.presupuesto.value); fila.moneda = f.moneda.value; }
+    const lista = esIng ? S.catsIng : S.sobres;
     if (s) Object.assign(s, await api.actualizar('sobres', s.id, fila));
-    else S.sobres.push(await api.insertar('sobres', { ...fila, orden: S.sobres.length }));
-    cerrarHoja(); render(); toast(s ? 'Sobre actualizado' : 'Sobre creado');
+    else lista.push(await api.insertar('sobres', { ...fila, orden: S.sobres.length + S.catsIng.length }));
+    cerrarHoja(); render(); toast(s ? 'Categoría actualizada' : 'Categoría creada');
   });
 }
 
@@ -1280,7 +1357,7 @@ function hojaSub(s = null) {
       <label class="campo"><span style="color:var(--tinta)">La fecha es aproximada</span><span class="interruptor"><input type="checkbox" name="como_pendiente" ${s?.como_pendiente ? 'checked' : ''}><span></span></span></label>
       ${s ? `<label class="campo"><span style="color:var(--tinta)">Activo</span><span class="interruptor"><input type="checkbox" name="activa" ${s.activa ? 'checked' : ''}><span></span></span></label>` : ''}
     </div>
-    <div class="etiqueta">Cargar al sobre</div>${chipsSobre('sobre', s?.sobre_id)}
+    <div class="etiqueta">Cargar a la categoría</div>${chipsSobre('sobre', s?.sobre_id)}
     <p class="nota">Con "fecha aproximada" se anota como pendiente ese día y vos lo pasás a pagado cuando lo pagués.</p>
     <div class="acciones">
       ${s ? `<button type="button" class="btn peligro" data-accion="borrar-sub" data-id="${s.id}" aria-label="Eliminar gasto fijo">${ico('basura')}</button>` : ''}
@@ -1331,7 +1408,7 @@ function hojaCuotas(g) {
     <div class="etiqueta" style="margin-top:0">¿En cuántas cuotas?</div>
     <div class="chips" role="radiogroup">${[3, 6, 10, 12, 18, 24].map((n, i) => `<label><input type="radio" name="n" value="${n}" ${i === 0 ? 'checked' : ''}><span>${n} meses</span></label>`).join('')}</div>
     <div class="resultado" id="res-cuotas" style="margin-top:14px"></div>
-    <p class="nota">Este gasto pasa a ser la cuota 1. Las siguientes se anotan solas cada mes, el mismo día, en el mismo sobre.</p>
+    <p class="nota">Este gasto pasa a ser la cuota 1. Las siguientes se anotan solas cada mes, el mismo día, en el misma categoría.</p>
     <div class="acciones"><button type="submit" class="btn primario">Pasar a cuotas</button></div>`);
   const pintar = () => { const n = Number(valorRadio(f, 'n')); $('#res-cuotas', f).innerHTML = `<b>${n} cuotas de ${fmt(g.monto / n, g.moneda)}</b><br><small>Este mes cuenta solo ${fmt(g.monto / n, g.moneda)} en vez de ${fmt(g.monto, g.moneda)}.</small>`; };
   f.addEventListener('change', pintar); pintar();
@@ -1349,7 +1426,7 @@ function hojaCuotas(g) {
 }
 
 function hojaAhorro(a = null) {
-  const f = abrirHoja(a ? 'Editar sobre de ahorro' : 'Nuevo sobre de ahorro', `
+  const f = abrirHoja(a ? 'Editar meta de ahorro' : 'Nueva meta de ahorro', `
     <div class="campos">
       <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(a?.nombre || '')}" placeholder="Viaje, emergencias…" autofocus></label>
       <label class="campo"><span>Meta</span><input name="meta" inputmode="decimal" value="${a?.meta || ''}" placeholder="Opcional"></label>
@@ -1385,10 +1462,10 @@ function hojaPresupuesto(s) {
   });
 }
 
-// El sobrante sale del sobre como un movimiento y entra al sobre de ahorro elegido
+// El sobrante sale de la categoría como un movimiento y entra al meta de ahorro elegido
 function hojaPasarAhorro(s) {
   const e = estadoSobre(s, gastadoSobre(s, enCiclo(ciclo())));
-  if (!S.ahorros.length) { toast('Primero creá un sobre de ahorro en la pestaña Ahorros'); return; }
+  if (!S.ahorros.length) { toast('Primero creá una meta de ahorro en la pestaña Ahorros'); return; }
   const f = abrirHoja('Pasar a ahorro', `
     <p class="nota" style="text-align:center;margin:0 0 4px">Sobrante de ${esc(s.nombre)}: <b class="bien">${fmt(e.monto, s.moneda)}</b></p>
     <div class="monto-grande">
@@ -1438,7 +1515,7 @@ function abrirMenu() {
   const n = S.gastos.filter(g => !g.sobre_id).length;
   const capa = document.createElement('div');
   capa.innerHTML = `<div class="capa-menu" data-accion="cerrar-menu"></div><div class="menu" role="menu">
-    <button role="menuitem" data-accion="nuevo-sobre">Nuevo sobre ${ico('mas')}</button>
+    <button role="menuitem" data-accion="nuevo-sobre">Nueva categoría ${ico('mas')}</button>
     <button role="menuitem" data-accion="ir" data-v="movimientos">Movimientos del mes ${ico('lista')}</button>
     <button role="menuitem" data-accion="ir" data-v="historial">Historial ${ico('historial')}</button>
     <button role="menuitem" data-accion="ir" data-v="sinsobre">Sin sobre${n ? ` (${n})` : ''} ${ico('bandeja')}</button>
@@ -1485,8 +1562,8 @@ function vistaDescargas() {
   <p class="nota">${n} ${n === 1 ? 'gasto' : 'gastos'} del ${r.texto}.</p>
   <div class="titulo" style="margin-top:26px">Descargar</div>
   <div class="grupo">
-    <button class="fila" data-accion="excel">${ico('lista')}<span class="txt"><b>Excel</b><small>Resumen por mes y sobre, gastos, sobres, ahorros y suscripciones</small></span>${ico('descargar', 'fin')}</button>
-    <button class="fila" data-accion="informe">${ico('recibo')}<span class="txt"><b>Informe en PDF</b><small>Totales, tabla por sobre y detalle de gastos</small></span>${ico('descargar', 'fin')}</button>
+    <button class="fila" data-accion="excel">${ico('lista')}<span class="txt"><b>Excel</b><small>Resumen por mes y categoría, gastos, categorías, ahorros y suscripciones</small></span>${ico('descargar', 'fin')}</button>
+    <button class="fila" data-accion="informe">${ico('recibo')}<span class="txt"><b>Informe en PDF</b><small>Totales, tabla por categoría y detalle de gastos</small></span>${ico('descargar', 'fin')}</button>
     <button class="fila" data-accion="exportar">${ico('copiar')}<span class="txt"><b>CSV</b><small>Solo los gastos, en una tabla</small></span>${ico('descargar', 'fin')}</button>
   </div>
   <p class="nota">Para el PDF se abre la ventana de impresión: en el iPhone tocá Compartir → Guardar en Archivos.</p>`;
@@ -1494,7 +1571,7 @@ function vistaDescargas() {
 
 function exportar() {
   const r = rangoDescarga();
-  const filas = [['fecha', 'comercio', 'monto', 'moneda', 'sobre', 'metodo', 'origen', 'nota']];
+  const filas = [['fecha', 'comercio', 'monto', 'moneda', 'categoria', 'metodo', 'origen', 'nota']];
   for (const g of gastosRango(r)) filas.push([g.fecha.slice(0, 16).replace('T', ' '), g.comercio || '', g.monto, g.moneda,
     sobreDe(g.sobre_id)?.nombre || '', metodoDe(g.metodo_id)?.nombre || '', FUENTES[g.fuente], /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '']);
   const csv = '﻿' + filas.map(f => f.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
@@ -1504,7 +1581,7 @@ function exportar() {
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-// Una fila por mes y sobre, contando solo los gastos dentro del rango
+// Una fila por mes y categoría, contando solo los gastos dentro del rango
 function filasResumen(r) {
   const filas = [];
   for (let d = 0; d >= -14; d--) {
@@ -1538,7 +1615,7 @@ async function descargarExcel() {
     X.utils.book_append_sheet(libro, h, nombre);
   };
   hoja('Resumen', filasResumen(r).map(f => ({
-    'Mes': f.mes, 'Inicio': f.inicio, 'Sobre': f.s.nombre, 'Moneda': f.s.moneda,
+    'Mes': f.mes, 'Inicio': f.inicio, 'Categoría': f.s.nombre, 'Moneda': f.s.moneda,
     'Presupuesto': f.e.conPres ? Number(f.s.presupuesto) : null, 'Gastado': Math.round(f.gastado * 100) / 100,
     'Sobrante (+) / Sobregiro (−)': f.e.conPres ? Math.round((f.s.presupuesto - f.gastado) * 100) / 100 : null,
     'Estado': f.e.conPres ? f.e.etiqueta : 'sin presupuesto', 'Cantidad de gastos': f.n,
@@ -1547,8 +1624,8 @@ async function descargarExcel() {
     const s = sobreDe(g.sobre_id);
     return {
       'Fecha': new Date(g.fecha), 'Comercio': g.comercio || '', 'Monto': Number(g.monto), 'Moneda': g.moneda,
-      'Monto en moneda del sobre': s ? Math.round(conv(g.monto, g.moneda, s.moneda) * 100) / 100 : null,
-      'Sobre': s?.nombre || 'Sin sobre', 'Método de pago': metodoDe(g.metodo_id)?.nombre || '', 'Tarjeta': g.tarjeta || '',
+      'Monto en moneda de la categoría': s ? Math.round(conv(g.monto, g.moneda, s.moneda) * 100) / 100 : null,
+      'Categoría': s?.nombre || 'Sin categoría', 'Método de pago': metodoDe(g.metodo_id)?.nombre || '', 'Tarjeta': g.tarjeta || '',
       'Origen': FUENTES[g.fuente] || g.fuente, 'Estado': g.estado || 'pagado', 'Nota': /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '',
     };
   }), [18, 26, 12, 8, 14, 18, 16, 8, 14, 24]);
@@ -1557,14 +1634,14 @@ async function descargarExcel() {
     'Origen': i.fuente === 'fijo' ? 'Ingreso fijo' : i.fuente === 'manual' ? 'A mano' : 'Aviso del banco',
     'Nota': /^fijo:/.test(i.nota || '') ? '' : i.nota || '',
   })), [18, 30, 14, 8, 16, 24]);
-  hoja('Sobres', S.sobres.map(s => ({ 'Sobre': s.nombre, 'Moneda': s.moneda, 'Presupuesto mensual': s.presupuesto > 0 ? Number(s.presupuesto) : null })), [22, 8, 20]);
+  hoja('Sobres', S.sobres.map(s => ({ 'Categoría': s.nombre, 'Moneda': s.moneda, 'Presupuesto mensual': s.presupuesto > 0 ? Number(s.presupuesto) : null })), [22, 8, 20]);
   hoja('Ahorros', S.ahorros.map(a => ({
     'Sobre de ahorro': a.nombre, 'Moneda': a.moneda, 'Meta': a.meta > 0 ? Number(a.meta) : null, 'Ahorrado': Number(a.ahorrado),
     'Avance %': a.meta > 0 ? Math.round(a.ahorrado / a.meta * 1000) / 10 : null,
   })), [24, 8, 14, 14, 10]);
   hoja('Gastos fijos', S.subs.map(s => ({
     'Gasto fijo': s.nombre, 'Tipo': TIPOS_FIJO[s.tipo] || 'Suscripción', 'Cuotas': s.cuotas ? `${s.cuotas_hechas || 0} de ${s.cuotas}` : '', 'Monto': Number(s.monto), 'Moneda': s.moneda, 'Frecuencia': s.frecuencia,
-    'Día de cobro': s.dia_cobro, 'Próximo cobro': proximoCobro(s), 'Sobre': sobreDe(s.sobre_id)?.nombre || '', 'Activa': s.activa ? 'Sí' : 'No',
+    'Día de cobro': s.dia_cobro, 'Próximo cobro': proximoCobro(s), 'Categoría': sobreDe(s.sobre_id)?.nombre || '', 'Activa': s.activa ? 'Sí' : 'No',
   })), [22, 12, 8, 12, 12, 14, 18, 8]);
   X.writeFile(libro, `${NOMBRE_APP} ${r.archivo}.xlsx`, { cellDates: true });
   toast('Excel descargado');
@@ -1591,17 +1668,17 @@ function informe() {
       <div><small>Gastado</small><b>${fmt(totGast, mv)}</b></div>
       <div><small>${neto < 0 ? 'Sobregiro' : 'Sobrante'}</small><b class="${neto < 0 ? 'mal' : 'bien'}">${fmt(Math.abs(neto), mv)}</b></div>
     </div>
-    <h2>Por sobre</h2>
-    <table><thead><tr><th>Sobre</th><th>Presupuesto${meses > 1 ? ` (${meses} meses)` : ''}</th><th>Gastado</th><th>Sobrante / sobregiro</th></tr></thead><tbody>
+    <h2>Por categoría</h2>
+    <table><thead><tr><th>Categoría</th><th>Presupuesto${meses > 1 ? ` (${meses} meses)` : ''}</th><th>Gastado</th><th>Sobrante / sobregiro</th></tr></thead><tbody>
       ${filas.map(f => `<tr><td>${esc(f.s.nombre)}</td><td>${f.conPres ? fmt(f.pres, f.s.moneda) : '—'}</td><td>${fmt(f.g, f.s.moneda)}</td>
         <td class="${f.conPres ? (f.dif < 0 ? 'mal' : 'bien') : ''}">${f.conPres ? fmt(f.dif, f.s.moneda) : '—'}</td></tr>`).join('')}
     </tbody></table>
-    ${S.ahorros.length ? `<h2>Sobres de ahorro</h2><table><thead><tr><th>Ahorro</th><th>Meta</th><th>Ahorrado</th><th>Avance</th></tr></thead><tbody>
+    ${S.ahorros.length ? `<h2>Metas de ahorro</h2><table><thead><tr><th>Ahorro</th><th>Meta</th><th>Ahorrado</th><th>Avance</th></tr></thead><tbody>
       ${S.ahorros.map(a => `<tr><td>${esc(a.nombre)}</td><td>${a.meta > 0 ? fmt(a.meta, a.moneda) : '—'}</td><td>${fmt(a.ahorrado, a.moneda)}</td><td>${a.meta > 0 ? Math.round(a.ahorrado / a.meta * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : ''}
     <h2>Detalle de gastos</h2>
-    <table class="detalle"><thead><tr><th>Fecha</th><th>Comercio</th><th>Sobre</th><th>Método</th><th>Monto</th></tr></thead><tbody>
+    <table class="detalle"><thead><tr><th>Fecha</th><th>Comercio</th><th>Categoría</th><th>Método</th><th>Monto</th></tr></thead><tbody>
       ${[...lista].reverse().map(g => `<tr><td>${new Date(g.fecha).toLocaleDateString('es-CR', { day: 'numeric', month: 'short' })}</td><td>${esc(g.comercio || '')}</td>
-        <td>${esc(sobreDe(g.sobre_id)?.nombre || 'Sin sobre')}</td><td>${esc(metodoDe(g.metodo_id)?.nombre || FUENTES[g.fuente])}</td><td>${fmt(g.monto, g.moneda)}</td></tr>`).join('')}
+        <td>${esc(sobreDe(g.sobre_id)?.nombre || 'Sin categoría')}</td><td>${esc(metodoDe(g.metodo_id)?.nombre || FUENTES[g.fuente])}</td><td>${fmt(g.monto, g.moneda)}</td></tr>`).join('')}
     </tbody></table>`;
   setTimeout(() => window.print(), 50);
 }
@@ -1618,10 +1695,10 @@ function leerAvisoPegado() {
   }
   const m = S.metodos.find(x => x.ultimos4 && x.ultimos4 === a.tarjeta);
   const regla = a.comercio && S.reglas.find(r => r.comercio === normalizarComercio(a.comercio));
-  const sobre = m?.sobre_id || S.cfg.atajo_sobre_id || (S.cfg.atajo_recordar && regla ? regla.sobre_id : '');
-  S.avisoLeido = { monto: a.monto, moneda: a.moneda, comercio: a.comercio, tarjeta: a.tarjeta, metodo_id: m?.id, sobre_id: sobre, fuente: 'sms' };
+  const catSug = m?.sobre_id || S.cfg.atajo_sobre_id || (S.cfg.atajo_recordar && regla ? regla.sobre_id : '');
+  S.avisoLeido = { monto: a.monto, moneda: a.moneda, comercio: a.comercio, tarjeta: a.tarjeta, metodo_id: m?.id, sobre_id: catSug, fuente: 'sms' };
   res.innerHTML = `<div class="resultado"><b>${fmt(a.monto, a.moneda)}</b>${a.comercio ? ' en ' + esc(a.comercio) : ''}${a.tarjeta ? ' · tarjeta •••• ' + a.tarjeta : ''}
-    <br><small>${sobre ? 'Va al sobre ' + esc(sobreDe(sobre)?.nombre || '') : 'Elegí el sobre al registrarlo'}</small></div>
+    <br><small>${catSug ? 'Va a ' + esc(sobreDe(catSug)?.nombre || '') : 'Elegí la categoría al registrarlo'}</small></div>
     <div class="acciones"><button class="btn primario" data-accion="registrar-aviso">Revisar y registrar</button></div>`;
 }
 
@@ -1673,6 +1750,10 @@ async function accion(el) {
       break;
     }
     case 'nuevo-sobre': hojaSobre(); break;
+    case 'nueva-cat-ing': hojaSobre(null, 'ingreso'); break;
+    case 'editar-cat-ing': hojaSobre(catIngDe(id), 'ingreso'); break;
+    case 'cat-tab': S.catTab = el.dataset.valor; render(); break;
+    case 'cat-sugeridas': await agregarSugeridas(el.dataset.valor); break;
     case 'editar-sobre': hojaSobre(sobreDe(id)); break;
     case 'presupuesto': hojaPresupuesto(sobreDe(id)); break;
     case 'sobrante-ahorro': hojaPasarAhorro(sobreDe(id)); break;
@@ -1697,10 +1778,10 @@ async function accion(el) {
       if (!confirm('¿Borrar este gasto?')) return;
       await api.borrar('gastos', id); S.gastos = S.gastos.filter(g => g.id !== id); cerrarHoja(); render(); toast('Gasto borrado'); break;
     case 'borrar-sobre': {
-      if (!confirm('¿Eliminar este sobre? Sus gastos se quedan en el historial.')) return;
-      await api.actualizar('sobres', id, { archivado: true }); S.sobres = S.sobres.filter(s => s.id !== id);
+      if (!confirm('¿Eliminar esta categoría? Sus gastos se quedan en el historial.')) return;
+      await api.actualizar('sobres', id, { archivado: true }); S.sobres = S.sobres.filter(s => s.id !== id); S.catsIng = S.catsIng.filter(s => s.id !== id);
       if (vistaActual().v === 'sobre') S.pila.pop();
-      cerrarHoja(); render(); toast('Sobre eliminado'); break;
+      cerrarHoja(); render(); toast('Categoría eliminada'); break;
     }
     case 'borrar-sub':
       if (!confirm('¿Eliminar este gasto fijo? Lo que ya se registró se queda.')) return;
@@ -1717,7 +1798,7 @@ async function accion(el) {
     case 'exportar': exportar(); break;
     case 'leer-aviso': leerAvisoPegado(); break;
     case 'registrar-aviso': S.avisoLeido?.ingreso ? hojaIngreso(null, S.avisoLeido) : hojaGasto(null, S.avisoLeido); break;
-    case 'salir': await api.salir(); location.reload(); break;
+    case 'salir': borrarCopia(); await api.salir(); location.reload(); break;
   }
 }
 
@@ -1775,7 +1856,7 @@ function pantallaAcceso(msg = '') {
   $('#app').hidden = true;
   const a = $('#acceso'); a.hidden = false;
   a.innerHTML = `<form class="acceso" novalidate>
-    <h1 class="marca">${NOMBRE_APP}</h1><p>Tu presupuesto, sobre por sobre.</p>
+    <h1 class="marca">${NOMBRE_APP}</h1><p>Tu presupuesto, categoría por categoría.</p>
     <div class="campos">
       <label class="campo"><span>Correo</span><input name="email" type="email" autocomplete="email"></label>
       <label class="campo"><span>Contraseña</span><input name="clave" type="password" autocomplete="current-password"></label>
@@ -1797,13 +1878,31 @@ function pantallaAcceso(msg = '') {
   f.crear.addEventListener('click', () => entrar(true));
 }
 
+// Copia local de los datos: la app pinta al instante con lo último que vio y luego se pone al día
+const CLAVE_COPIA = 'whiplash-copia-v1';
+const CAMPOS_COPIA = ['cfg', 'sobres', 'catsIng', 'metodos', 'gastos', 'reglas', 'subs', 'ahorros', 'ingresos', 'fijos'];
+function guardarCopia() {
+  if (modoDemo || !S.usuario?.id || !S.cfg) return;
+  try { localStorage.setItem(CLAVE_COPIA, JSON.stringify({ u: S.usuario.id, d: Object.fromEntries(CAMPOS_COPIA.map(k => [k, S[k]])) })); } catch { /* sin espacio */ }
+}
+function leerCopia(uid) {
+  try { const c = JSON.parse(localStorage.getItem(CLAVE_COPIA)); return c && c.u === uid && c.d && c.d.cfg ? c.d : null; } catch { return null; }
+}
+const borrarCopia = () => { try { localStorage.removeItem(CLAVE_COPIA); } catch { /* nada */ } };
+document.addEventListener('visibilitychange', () => { if (document.hidden) guardarCopia(); });
+
 async function iniciar() {
   const u = await api.sesion();
   if (!u) return pantallaAcceso();
   S.usuario = u;
   $('#acceso').hidden = true; $('#app').hidden = false;
-  try { await cargarTodo(); render(); }
-  catch (err) { $('#vista').innerHTML = `<div class="vacio">No pude cargar tus datos.<br><small>${esc(err.message)}</small></div>`; }
+  const copia = modoDemo ? null : leerCopia(u.id);
+  if (copia) { Object.assign(S, copia); aplicarTema(); render(); }
+  try { await cargarTodo(); guardarCopia(); render(); }
+  catch (err) {
+    if (copia) toast('Sin conexión: se muestra lo último guardado');
+    else $('#vista').innerHTML = `<div class="vacio">No pude cargar tus datos.<br><small>${esc(err.message)}</small></div>`;
+  }
 }
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

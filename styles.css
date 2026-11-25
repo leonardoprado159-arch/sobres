@@ -564,3 +564,10 @@ button.est-fila { width: 100%; text-align: left; }
 .fila-det b.bien { color: var(--bien); } .fila-det b.mal { color: var(--mal); }
 .resultado small { display: block; font-size: 13px; color: var(--suave); margin-bottom: 4px; }
 .resultado.azul { background: color-mix(in srgb, var(--s1) 12%, var(--fondo)); margin: 0 0 8px; }
+
+/* ---------- categorías ---------- */
+.grupo-cat { font-size: 13px; font-weight: 600; color: var(--suave); text-transform: uppercase; letter-spacing: .05em; margin: 20px 6px 8px; }
+.destacada + .grupo-cat { margin-top: 4px; }
+.destacada .lado b { overflow-wrap: anywhere; }
+/* menos trabajo para el teléfono: desenfoques más livianos */
+.tabs { backdrop-filter: blur(12px) saturate(1.4); -webkit-backdrop-filter: blur(12px) saturate(1.4); }

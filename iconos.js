@@ -48,6 +48,11 @@ const P = {
   efectivo: '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
   sinpe: '<rect width="14" height="20" x="5" y="2" rx="2"/><path d="M9 7h6M9 11h6M12 18h.01"/>',
   barras: '<path d="M3 3v18h18"/><path d="M8 17V10M13 17V5M18 17v-5"/>',
+  juego: '<line x1="6" x2="10" y1="11" y2="11"/><line x1="8" x2="8" y1="9" y2="13"/><line x1="15" x2="15.01" y1="12" y2="12"/><line x1="18" x2="18.01" y1="10" y2="10"/><path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/>',
+  copa: '<path d="M8 22h8"/><path d="M7 10h10"/><path d="M12 15v7"/><path d="M12 15a5 5 0 0 0 5-5c0-2-.5-4-2-8H9c-1.5 4-2 6-2 8a5 5 0 0 0 5 5Z"/>',
+  dulce: '<path d="M20 21v-8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8"/><path d="M4 16s.5-1 2-1 2.5 2 4 2 2.5-2 4-2 2.5 2 4 2 2-1 2-1"/><path d="M2 21h20"/><path d="M7 8v3M12 8v3M17 8v3M7 4h.01M12 4h.01M17 4h.01"/>',
+  escudo: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  maletin: '<rect width="20" height="14" x="2" y="7" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
   buscar: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   sube: '<path d="M22 7 13.5 15.5l-5-5L2 17"/><path d="M16 7h6v6"/>',
   baja: '<path d="M22 17 13.5 8.5l-5 5L2 7"/><path d="M16 17h6v-6"/>',
@@ -56,7 +61,8 @@ const P = {
 };
 
 export const ICONOS_SOBRE = ['carrito', 'comida', 'cafe', 'gasolina', 'carro', 'casa', 'luz', 'celular', 'salidas', 'ropa',
-  'salud', 'corazon', 'mascota', 'regalo', 'avion', 'libro', 'gym', 'tarjeta', 'billete', 'recibo'];
+  'salud', 'corazon', 'mascota', 'regalo', 'avion', 'libro', 'gym', 'tarjeta', 'billete', 'recibo',
+  'juego', 'copa', 'dulce', 'escudo', 'maletin', 'monedas', 'sinpe', 'magia', 'meta', 'alcancia'];
 export const ICONOS_AHORRO = ['meta', 'alcancia', 'avion', 'casa', 'carro', 'regalo', 'corazon', 'libro', 'celular', 'billete'];
 
 export function ico(nombre, clase = '') {
