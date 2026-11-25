@@ -56,13 +56,13 @@ const decimalesFaltan = (v) => { const i = v.indexOf(','); return !v ? '' : i < 
 // ================= estado =================
 const S = {
   cfg: null, sobres: [], metodos: [], gastos: [], reglas: [], subs: [], ahorros: [], usuario: null,
-  ingresos: [], fijos: [], catsIng: [], catTab: 'gasto', mov: { filtro: 'todo', q: '' }, est: { per: 'mes', d: 0, sel: 5 },
+  ingresos: [], fijos: [], catsIng: [], archivadas: [], catTab: 'gasto', mov: { filtro: 'todo', q: '' }, est: { per: 'mes', d: 0, sel: 5 },
   tab: 'inicio', pila: [],
 };
 const vistaActual = () => S.pila[S.pila.length - 1] || { v: S.tab };
 
 async function cargarTodo() {
-  const [config, categorías, metodos, gastos, reglas, subs, ahorros, ingresos, fijos] = await Promise.all(
+  const [config, sobres, metodos, gastos, reglas, subs, ahorros, ingresos, fijos] = await Promise.all(
     ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos'].map(t => api.listar(t)));
   S.cfg = config[0];
   if (S.cfg.dia_cierre !== 1) {
@@ -70,7 +70,8 @@ async function cargarTodo() {
     api.actualizar('config', S.cfg.user_id, { dia_cierre: 1 }, 'user_id').catch(() => {});
   }
   const orden = (a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.creado).localeCompare(String(b.creado));
-  const vivas = categorías.filter(s => !s.archivado).sort(orden);
+  const vivas = sobres.filter(s => !s.archivado).sort(orden);
+  S.archivadas = sobres.filter(s => s.archivado).sort(orden);
   S.sobres = vivas.filter(s => (s.tipo || 'gasto') === 'gasto');   // categorías de gasto
   S.catsIng = vivas.filter(s => s.tipo === 'ingreso');             // categorías de ingreso
   S.metodos = metodos.sort(orden);
@@ -271,10 +272,10 @@ function filaMovU(m) {
       <span class="txt"><b>${esc(x.origen || 'Ingreso')}</b><small>${sub}</small></span>
       <span class="monto bien">+${fmt(x.monto, x.moneda)}</span></button>`;
   }
-  const s = sobreDe(x.sobre_id);
+  const s = sobreDe(x.sobre_id) || S.archivadas.find(a => a.id === x.sobre_id);
   const est = x.estado && x.estado !== 'pagado' ? x.estado : '';
   return `<button class="movu ${est ? 'por-pagar' : ''}" data-accion="editar-gasto" data-id="${x.id}">
-    <span class="tile">${ico(s ? s.icono : 'bandeja')}</span>
+    <span class="tile"${estiloTile(s)}>${ico(s ? s.icono : 'bandeja')}</span>
     <span class="txt"><b>${esc(x.comercio || 'Gasto')}${est ? `<i class="marca-est ${est}" title="${est}"></i>` : ''}</b><small>${est ? (est === 'pendiente' ? 'Pendiente · ' : 'Planeado · ') : ''}${s ? esc(s.nombre) : '<em>Sin categoría</em>'}</small></span>
     <span class="monto">−${fmt(x.monto, x.moneda)}</span></button>`;
 }
@@ -368,6 +369,7 @@ function abrirPanel() {
   <aside class="cajon" role="dialog" aria-label="Menú">
     <div class="cajon-cab"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b><small>${esc(modoDemo ? 'Modo demo' : S.usuario?.email || '')}</small></span></div>
     <div class="cajon-lista">
+      ${fila('carpeta', 'Configurar categorías', 'catcfg')}
       ${fila('monedas', 'Ingresos fijos', 'fijos')}
       ${fila('tarjeta', 'Métodos de pago', 'metodos')}
       ${fila('calendario', 'Gastos fijos y cuotas', 'suscripciones')}
@@ -497,6 +499,8 @@ function hojaFijo(x = null) {
 const MAX_SERIES = 8;
 function colorDeSobre(i) {
   // pocas categorías: un color por categoría
+  const fijo = colorFijo(S.sobres[i]);
+  if (fijo) return fijo;
   if (S.sobres.length <= MAX_SERIES) return `var(--s${i + 1})`;
   // muchas: el color va por grupo, y cada categoría sigue saliendo con su nombre en la lista
   const grupos = [...new Set(S.sobres.map(s => (s.grupo || '').trim() || 'Sin grupo'))];
@@ -747,6 +751,80 @@ function hojaPersonalizar() {
     <div class="acciones"><button type="button" class="btn primario" data-accion="cerrar">Listo</button></div>`);
 }
 
+// ================= configuración de categorías: colores, grupos y archivo =================
+const COLORES_CAT = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'];
+const nombreGrupo = (s) => (s.grupo || '').trim() || 'Sin grupo';
+const colorGrupo = (g) => { const k = (S.cfg.grupos || {})[g]; return k ? `var(--${k})` : null; };
+// color elegido para la categoría; si no tiene, el de su grupo
+const colorFijo = (s) => (!s ? null : s.color ? `var(--${s.color})` : colorGrupo(nombreGrupo(s)));
+const estiloTile = (s) => { const c = colorFijo(s); return c ? ` style="color:${c};background:color-mix(in srgb, ${c} 14%, var(--fondo))"` : ''; };
+const usosCat = (s) => (s.tipo === 'ingreso' ? S.ingresos.filter(i => i.categoria_id === s.id).length : S.gastos.filter(g => g.sobre_id === s.id).length);
+const catsDeTab = () => ((S.catTab || 'gasto') === 'ingreso' ? S.catsIng : S.sobres);
+const muestras = (nombre, sel) => `<div class="colores" role="radiogroup" aria-label="Color">
+  <label><input type="radio" name="${nombre}" value="" ${!sel ? 'checked' : ''} aria-label="Automático"><span class="auto">Auto</span></label>
+  ${COLORES_CAT.map((k, i) => `<label><input type="radio" name="${nombre}" value="${k}" ${sel === k ? 'checked' : ''} aria-label="Color ${i + 1}"><span style="background:var(--${k})"></span></label>`).join('')}</div>`;
+const segCat = () => { const tab = S.catTab || 'gasto'; return `<div class="segmento desliza" style="--n:2;--i:${tab === 'gasto' ? 0 : 1};margin-bottom:14px" role="tablist"><span class="pill"></span>
+    <button class="${tab === 'gasto' ? 'activo' : ''}" data-accion="cat-tab" data-valor="gasto" role="tab" aria-selected="${tab === 'gasto'}">Gastos</button>
+    <button class="${tab === 'ingreso' ? 'activo' : ''}" data-accion="cat-tab" data-valor="ingreso" role="tab" aria-selected="${tab === 'ingreso'}">Ingresos</button></div>`; };
+
+function vistaCatCfg() {
+  const tab = S.catTab || 'gasto', cats = catsDeTab();
+  const arch = S.archivadas.filter(s => (s.tipo || 'gasto') === tab);
+  return `
+  <header class="top">
+    <button class="redondo" data-accion="atras" aria-label="Volver">${ico('izquierda')}</button>
+    <div class="titulo-doble"><b>Categorías</b><small>Colores, grupos y archivo</small></div>
+    <button class="redondo" data-accion="ir" data-v="grupos" aria-label="Grupos de categorías">${ico('carpeta')}</button>
+    <button class="redondo" data-accion="${tab === 'gasto' ? 'nuevo-sobre' : 'nueva-cat-ing'}" aria-label="Nueva categoría">${ico('mas')}</button>
+  </header>
+  ${segCat()}
+  ${porGrupo(cats).map(([g, l]) => `<button class="grupo-cat btn-grupo" data-accion="editar-grupo" data-valor="${esc(g)}" aria-label="Editar grupo ${esc(g)}">
+      <i class="punto" style="background:${colorGrupo(g) || 'var(--tenue)'}"></i><span>${esc(g)}</span>${ico('lapiz')}</button>
+    <section class="pila chica">${l.map(s => `<button class="movu" data-accion="${tab === 'ingreso' ? 'editar-cat-ing' : 'editar-sobre'}" data-id="${s.id}">
+      <span class="tile"${estiloTile(s)}>${ico(s.icono)}</span>
+      <span class="txt"><b>${esc(s.nombre)} <span class="cuenta">(${usosCat(s)})</span></b></span>${ico('derecha', 'fin')}</button>`).join('')}</section>`).join('')}
+  ${cats.length ? '' : `<div class="vacio">${ico('carpeta')}<div>No hay categorías aquí todavía.</div></div>`}
+  ${arch.length ? `<div class="grupo-cat">Archivadas (${arch.length})</div>
+    <section class="pila chica">${arch.map(s => `<div class="movu" style="opacity:.75">
+      <span class="tile">${ico(s.icono)}</span><span class="txt"><b>${esc(s.nombre)}</b><small>No sale en las listas</small></span>
+      <button class="btn chico" data-accion="restaurar-cat" data-id="${s.id}">Restaurar</button></div>`).join('')}</section>` : ''}
+  <p class="nota" style="margin-top:18px">Tocá una categoría para cambiarle nombre, color, ícono o grupo, o para archivarla. Tocá el nombre de un grupo para cambiarle el color.</p>`;
+}
+
+function vistaGrupos() {
+  const grupos = porGrupo(catsDeTab());
+  return `
+  <header class="top">
+    <button class="redondo" data-accion="atras" aria-label="Volver">${ico('izquierda')}</button>
+    <div class="titulo-doble"><b>Grupos de categorías</b></div>
+  </header>
+  ${segCat()}
+  <section class="pila chica">${grupos.map(([g, l]) => `<button class="movu" data-accion="editar-grupo" data-valor="${esc(g)}">
+    <span class="tile" style="background:${colorGrupo(g) || 'var(--tenue)'}"></span>
+    <span class="txt"><b>${esc(g)}</b><small>${l.length} ${l.length === 1 ? 'categoría' : 'categorías'}</small></span>${ico('derecha', 'fin')}</button>`).join('')}</section>
+  ${grupos.length ? '' : `<div class="vacio">${ico('carpeta')}<div>Todavía no hay grupos.</div></div>`}
+  <p class="nota" style="margin-top:18px">Un grupo se crea al escribirlo en una categoría. Aquí le cambiás el nombre y el color.</p>`;
+}
+
+function hojaGrupo(g) {
+  const cats = catsDeTab().filter(s => nombreGrupo(s) === g);
+  const f = abrirHoja('Editar grupo', `
+    <div class="campos"><label class="campo"><span>Nombre</span><input name="nombre" value="${esc(g === 'Sin grupo' ? '' : g)}" placeholder="Nombre del grupo" autocomplete="off"></label></div>
+    <div class="etiqueta">Color del grupo</div>${muestras('color', (S.cfg.grupos || {})[g] || '')}
+    <p class="nota">${cats.length} ${cats.length === 1 ? 'categoría' : 'categorías'} en este grupo. Las que no tengan color propio usan el del grupo.</p>
+    <div class="acciones"><button type="submit" class="btn primario">Guardar</button></div>`);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nuevo = f.nombre.value.trim() || g, color = valorRadio(f, 'color');
+    if (nuevo !== g) for (const s of cats) Object.assign(s, await api.actualizar('sobres', s.id, { grupo: nuevo === 'Sin grupo' ? null : nuevo }));
+    const grupos = { ...(S.cfg.grupos || {}) };
+    delete grupos[g];
+    if (color) grupos[nuevo] = color; else delete grupos[nuevo];
+    await guardarCfg({ grupos });
+    cerrarHoja(); render(); toast('Grupo guardado');
+  });
+}
+
 // Categorías sugeridas: [nombre, ícono, grupo, tipo]
 const SUGERIDAS = [
   ['Supermercado', 'carrito', 'Comida y bebida', 'gasto'],
@@ -781,7 +859,7 @@ function porGrupo(cats) {
 function vistaSobres() {
   const c = ciclo(), lista = enCiclo(c), mv = S.cfg.moneda_vista, tab = S.catTab || 'gasto';
   const faltan = faltanSugeridas(tab).length;
-  const cab = `${top('Categorías', { derecha: `<button class="redondo" data-accion="${tab === 'gasto' ? 'nuevo-sobre' : 'nueva-cat-ing'}" aria-label="Nueva categoría">${ico('mas')}</button>` })}
+  const cab = `${top('Categorías', { derecha: `<button class="redondo" data-accion="ir" data-v="catcfg" aria-label="Configurar categorías">${ico('ajustes')}</button><button class="redondo" data-accion="${tab === 'gasto' ? 'nuevo-sobre' : 'nueva-cat-ing'}" aria-label="Nueva categoría">${ico('mas')}</button>` })}
   <div class="segmento desliza" id="seg-cat" style="--n:2;--i:${tab === 'gasto' ? 0 : 1};margin-bottom:14px" role="tablist"><span class="pill"></span>
     <button class="${tab === 'gasto' ? 'activo' : ''}" data-accion="cat-tab" data-valor="gasto" role="tab" aria-selected="${tab === 'gasto'}">Gastos</button>
     <button class="${tab === 'ingreso' ? 'activo' : ''}" data-accion="cat-tab" data-valor="ingreso" role="tab" aria-selected="${tab === 'ingreso'}">Ingresos</button></div>`;
@@ -794,7 +872,7 @@ function vistaSobres() {
     return `${cab}
     <div class="destacada"><div class="lado"><small>Recibido este mes</small><b>${fmt(total, mv)}</b></div>
       <div class="lado der"><small>${ing.length} ${ing.length === 1 ? 'ingreso' : 'ingresos'}</small></div></div>
-    ${porGrupo(S.catsIng).map(([g, cats]) => `<div class="grupo-cat">${esc(g)}</div><section class="pila">
+    ${porGrupo(S.catsIng).map(([g, cats]) => `<div class="grupo-cat"><i class="punto" style="background:${colorGrupo(g) || 'var(--tenue)'}"></i>${esc(g)}</div><section class="pila">
       ${cats.map(k => {
         const l = ing.filter(i => i.categoria_id === k.id), v = l.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0);
         return `<button class="item" data-accion="editar-cat-ing" data-id="${k.id}">${anillo(total > 0 ? v / total : 0, v > 0 ? '' : 'neutro', k.icono)}
@@ -818,7 +896,7 @@ function vistaSobres() {
   </div>
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre">
       ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin categoría' : 'gastos sin categoría'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
-  ${porGrupo(S.sobres).map(([g, cats]) => `<div class="grupo-cat">${esc(g)}</div><section class="pila">
+  ${porGrupo(S.sobres).map(([g, cats]) => `<div class="grupo-cat"><i class="punto" style="background:${colorGrupo(g) || 'var(--tenue)'}"></i>${esc(g)}</div><section class="pila">
     ${cats.map(s => {
       const e = estadoSobre(s, gastadoPer(s));
       return `<button class="item" data-accion="abrir-sobre" data-id="${s.id}">
@@ -1155,7 +1233,7 @@ const vistaAcerca = () => `${top('Acerca de', { atras: true })}
 // ================= render =================
 const VISTAS = {
   inicio: vistaInicio, sobres: vistaSobres, ahorros: vistaAhorros, movs: vistaMovs, est: vistaEst,
-  suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos,
+  suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos, catcfg: vistaCatCfg, grupos: vistaGrupos,
   sobre: vistaSobre, movimientos: vistaMovimientos, sinsobre: vistaSinSobre, historial: vistaHistorialGeneral,
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
   avisos: vistaAvisos, personalizacion: vistaPersonalizacion, acerca: vistaAcerca, descargas: vistaDescargas,
@@ -1314,16 +1392,17 @@ function hojaSobre(s = null, tipo = null) {
       <label class="campo"><span>Moneda</span><select name="moneda"><option value="CRC" ${s?.moneda !== 'USD' ? 'selected' : ''}>Colones ₡</option><option value="USD" ${s?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>`}
     </div>
     <datalist id="grupos-cat">${grupos.map(g => `<option value="${esc(g)}">`).join('')}</datalist>
+    <div class="etiqueta">Color</div>${muestras('color', s?.color || '')}
     <div class="etiqueta">Ícono</div>${rejilla('icono', ICONOS_SOBRE, s?.icono || (esIng ? 'monedas' : 'carrito'))}
     <div class="acciones">
-      ${s ? `<button type="button" class="btn peligro" data-accion="borrar-sobre" data-id="${s.id}" aria-label="Eliminar categoría">${ico('basura')}</button>` : ''}
+      ${s ? `<button type="button" class="btn peligro" data-accion="borrar-sobre" data-id="${s.id}" aria-label="Archivar categoría">${ico('bandeja')}</button>` : ''}
       <button type="submit" class="btn primario">Guardar</button>
     </div>`);
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const nombre = f.nombre.value.trim();
     if (!nombre) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
-    const fila = { nombre, grupo: f.grupo.value.trim() || null, icono: valorRadio(f, 'icono') || 'carrito', tipo };
+    const fila = { nombre, grupo: f.grupo.value.trim() || null, icono: valorRadio(f, 'icono') || 'carrito', tipo, color: valorRadio(f, 'color') || null };
     if (!esIng) { fila.presupuesto = leerMontoCampo(f.presupuesto.value); fila.moneda = f.moneda.value; fila.periodo = f.periodo.value; }
     const lista = esIng ? S.catsIng : S.sobres;
     if (s) Object.assign(s, await api.actualizar('sobres', s.id, fila));
@@ -1779,6 +1858,15 @@ async function accion(el) {
     case 'nueva-cat-ing': hojaSobre(null, 'ingreso'); break;
     case 'editar-cat-ing': hojaSobre(catIngDe(id), 'ingreso'); break;
     case 'cat-tab': S.catTab = el.dataset.valor; render(); break;
+    case 'editar-grupo': hojaGrupo(el.dataset.valor); break;
+    case 'restaurar-cat': {
+      const cat = S.archivadas.find(s => s.id === id);
+      if (!cat) break;
+      Object.assign(cat, await api.actualizar('sobres', id, { archivado: false }));
+      S.archivadas = S.archivadas.filter(s => s.id !== id);
+      (cat.tipo === 'ingreso' ? S.catsIng : S.sobres).push(cat);
+      render(); toast('Categoría restaurada'); break;
+    }
     case 'cat-sugeridas': await agregarSugeridas(el.dataset.valor); break;
     case 'editar-sobre': hojaSobre(sobreDe(id)); break;
     case 'presupuesto': hojaPresupuesto(sobreDe(id)); break;
@@ -1804,10 +1892,12 @@ async function accion(el) {
       if (!confirm('¿Borrar este gasto?')) return;
       await api.borrar('gastos', id); S.gastos = S.gastos.filter(g => g.id !== id); cerrarHoja(); render(); toast('Gasto borrado'); break;
     case 'borrar-sobre': {
-      if (!confirm('¿Eliminar esta categoría? Sus gastos se quedan en el historial.')) return;
+      if (!confirm('¿Archivar esta categoría? Deja de salir en las listas. Lo que ya registraste se conserva y la podés restaurar cuando querás.')) return;
+      const cat = sobreDe(id) || catIngDe(id);
       await api.actualizar('sobres', id, { archivado: true }); S.sobres = S.sobres.filter(s => s.id !== id); S.catsIng = S.catsIng.filter(s => s.id !== id);
+      if (cat) S.archivadas.push({ ...cat, archivado: true });
       if (vistaActual().v === 'sobre') S.pila.pop();
-      cerrarHoja(); render(); toast('Categoría eliminada'); break;
+      cerrarHoja(); render(); toast('Categoría archivada'); break;
     }
     case 'borrar-sub':
       if (!confirm('¿Eliminar este gasto fijo? Lo que ya se registró se queda.')) return;
@@ -1906,7 +1996,7 @@ function pantallaAcceso(msg = '') {
 
 // Copia local de los datos: la app pinta al instante con lo último que vio y luego se pone al día
 const CLAVE_COPIA = 'whiplash-copia-v1';
-const CAMPOS_COPIA = ['cfg', 'sobres', 'catsIng', 'metodos', 'gastos', 'reglas', 'subs', 'ahorros', 'ingresos', 'fijos'];
+const CAMPOS_COPIA = ['cfg', 'sobres', 'catsIng', 'archivadas', 'metodos', 'gastos', 'reglas', 'subs', 'ahorros', 'ingresos', 'fijos'];
 function guardarCopia() {
   if (modoDemo || !S.usuario?.id || !S.cfg) return;
   try { localStorage.setItem(CLAVE_COPIA, JSON.stringify({ u: S.usuario.id, d: Object.fromEntries(CAMPOS_COPIA.map(k => [k, S[k]])) })); } catch { /* sin espacio */ }

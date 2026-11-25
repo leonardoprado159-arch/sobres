@@ -595,3 +595,15 @@ button.est-fila { width: 100%; text-align: left; }
 .fila-ritmo .txt small { color: var(--suave); font-size: 14px; }
 .fila-ritmo > .fin { color: var(--tenue); width: 20px; height: 20px; }
 .tarjeta-vacia { background: var(--carta); border-radius: 20px; padding: 26px 18px; text-align: center; color: var(--suave); }
+
+/* ---------- configuración de categorías ---------- */
+.colores { flex-wrap: wrap; gap: 12px; }
+.colores .auto { display: grid; place-items: center; background: var(--carta); color: var(--suave); font-size: 11px; font-weight: 600; }
+.grupo-cat { display: flex; align-items: center; gap: 8px; }
+.btn-grupo { width: 100%; text-align: left; }
+.btn-grupo span { flex: 1; }
+.btn-grupo .i { width: 15px; height: 15px; color: var(--tenue); }
+.movu .cuenta { color: var(--tenue); font-weight: 500; }
+.movu > .fin { color: var(--tenue); width: 18px; height: 18px; }
+.movu .btn.chico { background: var(--fondo); }
+.top .redondo + .redondo { margin-left: -4px; }

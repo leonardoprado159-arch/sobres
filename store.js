@@ -21,7 +21,7 @@ function demo() {
   if (!memoria.config.length) memoria.config.push({ user_id: 'demo', token_atajos: 'demo-token-sin-servidor' });
   // valores por defecto, igual que en la base de datos
   memoria.config[0] = { dia_cierre: 1, tipo_cambio: 510, moneda_vista: 'CRC', atajo_sobre_id: null,
-    atajo_recordar: true, tema: 'auto', acento: 'verde', ...memoria.config[0] };
+    atajo_recordar: true, tema: 'auto', acento: 'verde', grupos: {}, ...memoria.config[0] };
   for (const t of TABLAS) memoria[t] ||= [];
   return memoria;
 }
