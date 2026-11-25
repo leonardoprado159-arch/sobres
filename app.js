@@ -23,11 +23,35 @@ const TIPOS_METODO = {
 const METODOS_RAPIDOS = [['SINPE Móvil', 'sinpe'], ['Tarjeta de débito', 'debito'], ['Tarjeta de crédito', 'credito'], ['Efectivo', 'efectivo']];
 const tipoMetodo = (m) => TIPOS_METODO[m.tipo] || TIPOS_METODO.otro;
 const ACENTOS = { verde: '#7ee8a3', azul: '#8cc8ff', morado: '#c4a8ff', naranja: '#ffc078' };
+const NOMBRE_APP = 'SLAH';
+// Montos en los campos: punto para miles y coma para decimales (2.500.000,00)
+const SEL_MONTO = 'input[name="monto"], input[name="presupuesto"], input[name="meta"], input[data-cfg="tipo_cambio"]';
 const leerMontoCampo = (v) => {
-  let t = String(v || '').replace(/[^\d.,]/g, '');
-  if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else t = t.replace(/,/g, '');
-  const n = Number(t); return n > 0 ? Math.round(n * 100) / 100 : 0;
+  const n = Number(String(v || '').replace(/[^\d,]/g, '').replace(',', '.'));
+  return n > 0 ? Math.round(n * 100) / 100 : 0;
 };
+const puntosMiles = (ent) => ent.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+// número guardado -> texto del campo
+function numATexto(n) {
+  n = Math.round(Number(n) * 100) / 100;
+  if (!(n > 0)) return '';
+  const [ent, dec] = n.toFixed(2).split('.');
+  return puntosMiles(ent) + (dec === '00' ? '' : ',' + dec);
+}
+// lo que se va escribiendo -> mismo texto con separadores
+function formatoVivo(valor, tecla) {
+  let v = String(valor);
+  // un punto recién tecleado es el separador decimal; los demás puntos son de miles
+  // (también al pegar un número como 2500000.5)
+  const pegado = tecla && tecla.length > 1 && /^\d+\.\d{1,2}$/.test(v.trim());
+  if ((tecla === '.' || v.endsWith('.') || pegado) && !v.includes(',')) { const i = v.lastIndexOf('.'); v = v.slice(0, i) + ',' + v.slice(i + 1); }
+  v = v.replace(/[^\d,]/g, '');
+  const i = v.indexOf(',');
+  if (i < 0) return puntosMiles(v);
+  const ent = v.slice(0, i), dec = v.slice(i + 1).replace(/,/g, '').slice(0, 2);
+  return (puntosMiles(ent) || '0') + ',' + dec;
+}
+const decimalesFaltan = (v) => { const i = v.indexOf(','); return !v ? '' : i < 0 ? ',00' : '0'.repeat(Math.max(0, 2 - (v.length - i - 1))); };
 
 // ================= estado =================
 const S = {
@@ -165,7 +189,7 @@ function vistaGastos() {
   const pendientes = S.gastos.filter(g => !g.sobre_id && new Date(g.fecha) >= c.ini).length;
   const prox = S.subs.filter(s => s.activa).map(s => ({ s, d: Math.round((proximoCobro(s) - new Date().setHours(0, 0, 0, 0)) / 864e5) })).filter(x => x.d <= 2);
   return `
-  ${top('Sobres', { derecha: `<button class="redondo" data-accion="menu" aria-label="Más opciones">${ico('puntos')}</button>` })}
+  ${top(NOMBRE_APP, { derecha: `<button class="redondo" data-accion="menu" aria-label="Más opciones">${ico('puntos')}</button>` })}
   <div class="destacada">
     <div class="lado">
       <button class="chip-moneda" data-accion="cambiar-moneda" aria-label="Cambiar moneda">${mv} ${ico('abajo')}</button>
@@ -363,7 +387,7 @@ function vistaMonedas() {
   </div>
   <div class="titulo" style="margin-top:26px">Tipo de cambio</div>
   <div class="campos"><label class="campo"><span>₡ por $1</span>
-    <input type="text" inputmode="decimal" value="${S.cfg.tipo_cambio}" data-cfg="tipo_cambio"></label></div>
+    <input type="text" inputmode="decimal" value="${numATexto(S.cfg.tipo_cambio)}" data-cfg="tipo_cambio"></label></div>
   <p class="nota">Cada sobre tiene su moneda. Un gasto en dólares que cae en un sobre en colones se convierte con este tipo de cambio.</p>`;
 }
 
@@ -468,7 +492,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>Sobres</b><small>Presupuesto personal por sobres · versión 2</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por sobres · versión 3</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -509,7 +533,20 @@ function abrirHoja(titulo, cuerpo) {
   const f = h.querySelector('form');
   // el monto grande crece con lo que se escribe, para que el símbolo quede pegado
   const m = f.querySelector('.monto-grande input');
-  if (m) { const ajustar = () => { m.style.width = Math.max(1, (m.value || m.placeholder).length) + 0.6 + 'ch'; }; m.addEventListener('input', ajustar); ajustar(); }
+  f.querySelectorAll(SEL_MONTO).forEach(i => { if (i.value) i.value = numATexto(i.value); });
+  if (m) {
+    m.insertAdjacentHTML('afterend', '<span class="dec" aria-hidden="true"></span>');
+    const dec = m.nextElementSibling;
+    const ajustar = () => {
+      dec.textContent = decimalesFaltan(m.value);
+      const largo = (m.value || m.placeholder).length + dec.textContent.length;
+      // los montos largos bajan de tamaño para caber en una línea
+      const px = largo > 13 ? 30 : largo > 10 ? 38 : largo > 8 ? 46 : 54;
+      m.closest('.fila-monto').style.setProperty('--tam', px + 'px');
+      m.style.width = Math.max(1, (m.value || m.placeholder).length) + 0.3 + 'ch';
+    };
+    m.addEventListener('input', ajustar); ajustar();
+  }
   // que el chip elegido quede a la vista
   f.querySelectorAll('.chips').forEach(c => { const l = c.querySelector('input:checked')?.closest('label'); if (l) c.scrollLeft = l.offsetLeft - 20; });
   const foco = f.querySelector('[autofocus]'); if (foco) setTimeout(() => foco.focus(), 80);
@@ -795,7 +832,7 @@ function exportar() {
   const csv = '﻿' + filas.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = `Sobres gastos ${hoyLocal()}.csv`;
+  a.download = `${NOMBRE_APP} gastos ${hoyLocal()}.csv`;
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
@@ -867,7 +904,7 @@ async function descargarExcel() {
     'Suscripción': s.nombre, 'Monto': Number(s.monto), 'Moneda': s.moneda, 'Frecuencia': s.frecuencia,
     'Día de cobro': s.dia_cobro, 'Próximo cobro': proximoCobro(s), 'Sobre': sobreDe(s.sobre_id)?.nombre || '', 'Activa': s.activa ? 'Sí' : 'No',
   })), [22, 12, 8, 12, 12, 14, 18, 8]);
-  X.writeFile(libro, `Sobres ${hoyLocal()}.xlsx`, { cellDates: true });
+  X.writeFile(libro, `${NOMBRE_APP} ${hoyLocal()}.xlsx`, { cellDates: true });
   toast('Excel descargado');
 }
 
@@ -1005,6 +1042,17 @@ document.addEventListener('change', async (e) => {
     }
   } catch (err) { toast('Error: ' + err.message); }
 });
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (!t.matches || !t.matches(SEL_MONTO)) return;
+  const nuevo = formatoVivo(t.value, e.data);
+  if (nuevo !== t.value) { t.value = nuevo; try { t.setSelectionRange(nuevo.length, nuevo.length); } catch { /* tipo sin selección */ } }
+}, true);
+document.addEventListener('focusout', (e) => {
+  const t = e.target;
+  // en los campos chicos, al salir se completan los decimales
+  if (t.matches && t.matches(SEL_MONTO) && !t.closest('.monto-grande') && t.value) { const n = leerMontoCampo(t.value); t.value = n ? numATexto(n) + (t.value.includes(',') ? '' : ',00') : ''; if (/,\d$/.test(t.value)) t.value += '0'; }
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if ($('#menu')) cerrarMenu(); else if (!$('#hoja').hidden) cerrarHoja();
@@ -1015,7 +1063,7 @@ function pantallaAcceso(msg = '') {
   $('#app').hidden = true;
   const a = $('#acceso'); a.hidden = false;
   a.innerHTML = `<form class="acceso" novalidate>
-    <h1 class="marca">Sobres</h1><p>Tu presupuesto, sobre por sobre.</p>
+    <h1 class="marca">${NOMBRE_APP}</h1><p>Tu presupuesto, sobre por sobre.</p>
     <div class="campos">
       <label class="campo"><span>Correo</span><input name="email" type="email" autocomplete="email"></label>
       <label class="campo"><span>Contraseña</span><input name="clave" type="password" autocomplete="current-password"></label>

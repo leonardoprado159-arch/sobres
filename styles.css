@@ -213,8 +213,8 @@ button { cursor: pointer; background: none; border: 0; padding: 0; text-align: i
 
 .monto-grande { display: flex; flex-direction: column; align-items: center; padding: 8px 0 18px; }
 .monto-grande .fila-monto { display: flex; align-items: baseline; justify-content: center; gap: 4px; width: 100%; }
-.monto-grande .simbolo { font-size: 40px; font-weight: 600; color: var(--suave); }
-.monto-grande input { width: 2ch; min-width: 1.6ch; max-width: 260px; border: 0; background: transparent; font-size: 54px; font-weight: 700; outline: none; text-align: center; letter-spacing: -.02em; padding: 0; }
+.monto-grande .simbolo { font-size: calc(var(--tam, 54px) * .74); font-weight: 600; color: var(--suave); }
+.monto-grande input { width: 2ch; min-width: 1.6ch; max-width: none; border: 0; background: transparent; font-size: var(--tam, 54px); font-weight: 700; outline: none; text-align: center; letter-spacing: -.02em; padding: 0; }
 .monto-grande input::placeholder { color: var(--tenue); }
 .alternar { display: inline-flex; background: var(--carta); border-radius: 99px; padding: 3px; margin-top: 4px; }
 .alternar label { position: relative; }
@@ -349,3 +349,4 @@ button { cursor: pointer; background: none; border: 0; padding: 0; text-align: i
 .mov-der { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 1 48%; text-align: left; }
 .mov-der b { color: var(--mal); font-weight: 700; font-size: 17px; }
 .mov-der small { color: var(--suave); font-size: 14px; line-height: 1.3; align-self: stretch; text-align: right; overflow-wrap: anywhere; }
+.monto-grande .dec { font-size: var(--tam, 54px); font-weight: 700; letter-spacing: -.02em; color: var(--tenue); }
