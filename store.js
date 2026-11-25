@@ -1,6 +1,8 @@
 // Capa de datos. Con config.js lleno usa Supabase; vacío, un modo demo en este navegador.
 const CFG = window.SOBRES_CONFIG || {};
-export const modoDemo = !(CFG.url && CFG.anonKey);
+// En la compu de desarrollo, ?demo abre el modo demo aunque haya servidor configurado
+const forzarDemo = ['localhost', '127.0.0.1'].includes(location.hostname) && location.search.includes('demo');
+export const modoDemo = forzarDemo || !(CFG.url && CFG.anonKey);
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
 

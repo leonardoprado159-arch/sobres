@@ -16,7 +16,12 @@ const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'o
 const MESES_L = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 const FUENTES = { manual: 'A mano', applepay: 'Apple Pay', sms: 'SMS', correo: 'Correo', suscripcion: 'Suscripción', ahorro: 'Pasado a ahorro' };
-const TIPOS_METODO = { tarjeta: ['Tarjeta', 'tarjeta'], efectivo: ['Efectivo', 'efectivo'], sinpe: ['SINPE Móvil', 'sinpe'], otro: ['Otro', 'billete'] };
+const TIPOS_METODO = {
+  tarjeta: ['Tarjeta', 'tarjeta'], debito: ['Tarjeta de débito', 'tarjeta'], credito: ['Tarjeta de crédito', 'tarjeta'],
+  sinpe: ['SINPE Móvil', 'sinpe'], efectivo: ['Efectivo', 'efectivo'], otro: ['Otro', 'billete'],
+};
+const METODOS_RAPIDOS = [['SINPE Móvil', 'sinpe'], ['Tarjeta de débito', 'debito'], ['Tarjeta de crédito', 'credito'], ['Efectivo', 'efectivo']];
+const tipoMetodo = (m) => TIPOS_METODO[m.tipo] || TIPOS_METODO.otro;
 const ACENTOS = { verde: '#7ee8a3', azul: '#8cc8ff', morado: '#c4a8ff', naranja: '#ffc078' };
 const leerMontoCampo = (v) => {
   let t = String(v || '').replace(/[^\d.,]/g, '');
@@ -342,13 +347,16 @@ function vistaMonedas() {
 }
 
 function vistaMetodos() {
+  const faltan = METODOS_RAPIDOS.filter(([n, tp]) => !S.metodos.some(m => m.tipo === tp || m.nombre.toLowerCase() === n.toLowerCase()));
   return `${top('Métodos de pago', { atras: true })}
+  ${faltan.length ? `<div class="etiqueta" style="margin-top:0">Agregar con un toque</div>
+  <div class="chips" style="margin-bottom:14px">${faltan.map(([n, tp]) => `<button class="chip-btn" data-accion="metodo-rapido" data-nombre="${esc(n)}" data-tipo="${tp}">${ico('mas')}${esc(n)}</button>`).join('')}</div>` : ''}
   <div class="grupo">
-    ${S.metodos.map(m => `<button class="fila" data-accion="editar-metodo" data-id="${m.id}">${ico(TIPOS_METODO[m.tipo][1])}
-      <span class="txt"><b>${esc(m.nombre)}</b><small>${[m.ultimos4 ? '•••• ' + m.ultimos4 : TIPOS_METODO[m.tipo][0], m.sobre_id ? 'Sobre: ' + esc(sobreDe(m.sobre_id)?.nombre || '') : ''].filter(Boolean).join(' · ')}</small></span>${ico('derecha', 'fin')}</button>`).join('')}
-    <button class="fila" data-accion="nuevo-metodo" style="color:var(--bien)">${ico('mas')}<span class="txt"><b>Agregar método de pago</b></span></button>
+    ${S.metodos.map(m => `<button class="fila" data-accion="editar-metodo" data-id="${m.id}">${ico(tipoMetodo(m)[1])}
+      <span class="txt"><b>${esc(m.nombre)}</b><small>${[m.ultimos4 ? '•••• ' + m.ultimos4 : tipoMetodo(m)[0], m.sobre_id ? 'Sobre: ' + esc(sobreDe(m.sobre_id)?.nombre || '') : ''].filter(Boolean).join(' · ')}</small></span>${ico('derecha', 'fin')}</button>`).join('')}
+    <button class="fila" data-accion="nuevo-metodo" style="color:var(--bien)">${ico('mas')}<span class="txt"><b>Agregar otro método</b></span></button>
   </div>
-  <p class="nota">Poné el nombre igual que en Wallet o los últimos 4 dígitos para que el atajo reconozca la tarjeta. Si le asignás un sobre, todo lo que pagués con ella cae ahí sin preguntar.</p>`;
+  <p class="nota">Las tarjetas que usés con Apple Pay se agregan solas aquí la primera vez que pagás con ellas. Tocá una para ponerle un sobre: todo lo que pagués con esa tarjeta cae ahí sin preguntar.</p>`;
 }
 
 function vistaReinicio() {
@@ -372,16 +380,27 @@ function vistaApplePay() {
   <p class="nota">${id ? 'Todo lo que pagués con Apple Pay cae en este sobre.' : 'El pago se registra solo. Si la app ya conoce el comercio o la tarjeta tiene sobre propio, cae ahí; si no, queda en "Sin sobre" para que lo asignés con un toque, y la próxima vez ese comercio entra solo.'}</p>
   <div class="titulo" style="margin-top:26px">Configurar el atajo (una sola vez)</div>
   ${datosAtajo()}
+  ${estadoAtajo()}
   <div class="pasos" style="margin-top:12px">
-    <div class="paso"><b>Creá la automatización</b>App Atajos → Automatización → ＋ → <b style="display:inline">Wallet</b> (en iOS 18 o anterior: Transacción). Marcá <b style="display:inline">todas</b> tus tarjetas, elegí "Ejecutar inmediatamente" y tocá Siguiente → Nueva automatización en blanco.</div>
-    <div class="paso"><b>Agregá una sola acción</b>Buscá <code>Obtener contenido de URL</code>. En URL pegá la dirección de arriba. Tocá la flecha para ver más: Método <code>POST</code>; en Encabezados agregá <code>x-token</code> y pegá tu token.</div>
-    <div class="paso"><b>Decile qué mandar</b>En Cuerpo de la solicitud (JSON) agregá tres campos de texto: <code>monto</code> → Entrada del atajo → Importe; <code>comercio</code> → Comercio; <code>tarjeta</code> → Tarjeta o pase. Tocá OK. Ya está: cada pago queda registrado.</div>
+    <div class="paso"><b>Nueva automatización</b>Abrí la app Atajos → pestaña Automatización → ＋ → <b style="display:inline">Wallet</b> (en iOS 18 o anterior: Transacción).</div>
+    <div class="paso"><b>Elegí la tarjeta</b>Tocá la tarjeta, dejá marcadas todas las categorías, elegí <b style="display:inline">Ejecutar inmediatamente</b> y tocá Siguiente. Si solo te deja una tarjeta, terminá esta y repetí los pasos para cada tarjeta.</div>
+    <div class="paso"><b>Una sola acción</b>Tocá "Nueva automatización en blanco", buscá <code>Obtener contenido de URL</code> y pegá la Dirección de arriba donde dice URL.</div>
+    <div class="paso"><b>Método POST</b>Tocá la flecha ⌄ de la acción y cambiá Método a <code>POST</code>. Dejá "Cuerpo de la solicitud" en JSON.</div>
+    <div class="paso"><b>Cuatro campos de texto</b>Con "Agregar campo nuevo → Texto":<br><code>token</code> → pegá tu Token<br><code>monto</code> → tocá el valor, elegí Entrada del atajo → Importe<br><code>comercio</code> → Entrada del atajo → Comercio<br><code>tarjeta</code> → Entrada del atajo → Tarjeta o pase</div>
+    <div class="paso"><b>Listo</b>Tocá OK. La fecha la pone la app sola. Al pagar, el gasto aparece en su sobre o en "Sin sobre".</div>
   </div>
   <div class="titulo" style="margin-top:26px">Opcional</div>
   <div class="pasos">
     <div class="paso"><b>Ver un aviso al pagar</b>Después de la acción agregá <code>Obtener valor del diccionario</code> con la clave <code>mensaje</code> y luego <code>Mostrar notificación</code>. Te dice el sobre y cuánto queda.</div>
     <div class="paso"><b>Que pregunte el sobre</b>Agregá al cuerpo el campo <code>preguntar</code> = 1. La respuesta trae <code>opciones</code>: usá <code>Elegir de la lista</code> y repetí la acción agregando <code>sobre</code> = Elemento seleccionado.</div>
   </div>`;
+}
+
+function estadoAtajo() {
+  const u = S.gastos.find(g => g.fuente === 'applepay');
+  if (!u) return `<div class="resultado" style="margin-top:12px">Todavía no ha llegado ningún pago por Apple Pay. Cuando llegue el primero, aquí vas a ver cuál fue.</div>`;
+  const f = new Date(u.fecha);
+  return `<div class="resultado" style="margin-top:12px"><b>El atajo funciona.</b> Último pago recibido: ${fmt(u.monto, u.moneda)}${u.comercio ? ' en ' + esc(u.comercio) : ''}, ${f.getDate()} ${MESES[f.getMonth()]} ${f.toLocaleTimeString('es-CR', { hour: 'numeric', minute: '2-digit' })}</div>`;
 }
 
 function datosAtajo() {
@@ -399,7 +418,7 @@ function vistaAvisos() {
   <div class="titulo" style="margin-top:26px">SMS</div>
   <div class="pasos">
     <div class="paso"><b>Automatización de Mensaje</b>Remitente: el número del BAC. Ejecutar inmediatamente.</div>
-    <div class="paso"><b>Mandá el texto</b><code>Obtener contenido de URL</code> (POST, encabezado <code>x-token</code>) con JSON: <code>fuente</code> = sms, <code>texto</code> = Entrada del atajo. Si querés aviso, agregá lo de "Ver un aviso al pagar" de Apple Pay.</div>
+    <div class="paso"><b>Mandá el texto</b><code>Obtener contenido de URL</code> con método POST y tres campos de texto: <code>token</code> = tu Token, <code>fuente</code> = sms, <code>texto</code> = Entrada del atajo. Si querés aviso, agregá lo de "Ver un aviso al pagar" de Apple Pay.</div>
   </div>
   <div class="titulo" style="margin-top:26px">Correo</div>
   <div class="pasos">
@@ -503,7 +522,7 @@ function hojaGasto(g = null, pre = {}) {
     <div class="etiqueta">Sobre</div>${chipsSobre('sobre', base.sobre_id)}
     ${S.metodos.length ? `<div class="etiqueta">Método de pago</div><div class="chips" role="radiogroup">
       <label><input type="radio" name="metodo" value="" ${!base.metodo_id ? 'checked' : ''}><span>Ninguno</span></label>
-      ${S.metodos.map(m => `<label><input type="radio" name="metodo" value="${m.id}" ${base.metodo_id === m.id ? 'checked' : ''}><span>${ico(TIPOS_METODO[m.tipo][1])}${esc(m.nombre)}</span></label>`).join('')}</div>` : ''}
+      ${S.metodos.map(m => `<label><input type="radio" name="metodo" value="${m.id}" ${base.metodo_id === m.id ? 'checked' : ''}><span>${ico(tipoMetodo(m)[1])}${esc(m.nombre)}</span></label>`).join('')}</div>` : ''}
     <div class="campos" style="margin-top:14px">
       <label class="campo"><span>Comercio</span><input name="comercio" value="${esc(base.comercio || '')}" placeholder="Opcional" list="comercios" autocomplete="off"></label>
       <label class="campo"><span>Fecha</span><input type="datetime-local" name="fecha" value="${local}"></label>
@@ -904,6 +923,9 @@ async function accion(el) {
     case 'editar-gasto': hojaGasto(S.gastos.find(g => g.id === id)); break;
     case 'editar-sub': hojaSub(S.subs.find(s => s.id === id)); break;
     case 'nuevo-metodo': hojaMetodo(); break;
+    case 'metodo-rapido':
+      S.metodos.push(await api.insertar('metodos_pago', { nombre: el.dataset.nombre, tipo: el.dataset.tipo, ultimos4: null, sobre_id: null, orden: S.metodos.length }));
+      render(); toast(el.dataset.nombre + ' agregado'); break;
     case 'editar-metodo': hojaMetodo(metodoDe(id)); break;
     case 'mover-ahorro': hojaMoverAhorro(S.ahorros.find(x => x.id === id)); break;
     case 'editar-ahorro': hojaAhorro(S.ahorros.find(x => x.id === id)); break;
