@@ -23,7 +23,7 @@ const TIPOS_METODO = {
 const METODOS_RAPIDOS = [['SINPE Móvil', 'sinpe'], ['Tarjeta de débito', 'debito'], ['Tarjeta de crédito', 'credito'], ['Efectivo', 'efectivo']];
 const tipoMetodo = (m) => TIPOS_METODO[m.tipo] || TIPOS_METODO.otro;
 const ACENTOS = { verde: '#7ee8a3', azul: '#8cc8ff', morado: '#c4a8ff', naranja: '#ffc078' };
-const NOMBRE_APP = 'SLAH';
+const NOMBRE_APP = 'SLASH';
 // Montos en los campos: punto para miles y coma para decimales (2.500.000,00)
 const SEL_MONTO = 'input[name="monto"], input[name="presupuesto"], input[name="meta"], input[data-cfg="tipo_cambio"]';
 const leerMontoCampo = (v) => {
