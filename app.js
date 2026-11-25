@@ -1596,9 +1596,13 @@ function filasResumen(r) {
     if (c.fin <= r.desde || c.ini > r.hasta) continue;
     const lista = enCiclo(c).filter(g => { const f = new Date(g.fecha); return f >= r.desde && f <= r.hasta; });
     for (const s of S.sobres) {
-      const g = gastadoSobre(s, lista), e = estadoSobre(s, g);
+      // el límite se lleva al mes: un límite semanal vale por las semanas que tiene ese mes
+      const dias = Math.round((c.fin - c.ini) / 864e5);
+      const veces = perCat(s) === 'semana' ? dias / 7 : PER_CAT[perCat(s)][3];
+      const limMes = Math.round(Number(s.presupuesto) * veces * 100) / 100;
+      const g = gastadoSobre(s, lista), e = estadoSobre({ ...s, presupuesto: limMes }, g);
       if (!g && !e.conPres) continue;
-      filas.push({ mes: nombreCiclo(c.ini), inicio: c.ini, s, gastado: g, e, n: lista.filter(x => x.sobre_id === s.id).length });
+      filas.push({ mes: nombreCiclo(c.ini), inicio: c.ini, s, gastado: g, e, limMes, n: lista.filter(x => x.sobre_id === s.id).length });
     }
   }
   return filas;
@@ -1623,10 +1627,11 @@ async function descargarExcel() {
   };
   hoja('Resumen', filasResumen(r).map(f => ({
     'Mes': f.mes, 'Inicio': f.inicio, 'Categoría': f.s.nombre, 'Moneda': f.s.moneda,
-    'Presupuesto': f.e.conPres ? Number(f.s.presupuesto) : null, 'Gastado': Math.round(f.gastado * 100) / 100,
-    'Sobrante (+) / Sobregiro (−)': f.e.conPres ? Math.round((f.s.presupuesto - f.gastado) * 100) / 100 : null,
+    'Límite': f.e.conPres ? Number(f.s.presupuesto) : null, 'Período del límite': f.e.conPres ? PER_CAT[perCat(f.s)][0] : '',
+    'Límite del mes': f.e.conPres ? f.limMes : null, 'Gastado': Math.round(f.gastado * 100) / 100,
+    'Sobrante (+) / Sobregiro (−)': f.e.conPres ? Math.round((f.limMes - f.gastado) * 100) / 100 : null,
     'Estado': f.e.conPres ? f.e.etiqueta : 'sin presupuesto', 'Cantidad de gastos': f.n,
-  })), [22, 12, 20, 8, 14, 14, 26, 16, 10]);
+  })), [22, 12, 28, 8, 14, 16, 16, 14, 26, 16, 10]);
   hoja('Gastos', gastosRango(r).map(g => {
     const s = sobreDe(g.sobre_id);
     return {
@@ -1657,10 +1662,10 @@ async function descargarExcel() {
 function informe() {
   const r = rangoDescarga(), lista = gastosRango(r), mv = S.cfg.moneda_vista;
   // meses que toca el rango: el presupuesto del período es el mensual por esa cantidad
-  let meses = 0; for (let d = 0; d >= -14; d--) { const c = ciclo(d); if (c.fin > r.desde && c.ini <= r.hasta) meses++; }
+  let meses = 0, diasMeses = 0; for (let d = 0; d >= -14; d--) { const c = ciclo(d); if (c.fin > r.desde && c.ini <= r.hasta) { meses++; diasMeses += Math.round((c.fin - c.ini) / 864e5); } }
   meses = Math.max(1, meses);
   const filas = S.sobres.map(s => {
-    const g = gastadoSobre(s, lista), pres = Number(s.presupuesto) * meses;
+    const g = gastadoSobre(s, lista), pres = Math.round(Number(s.presupuesto) * (perCat(s) === 'semana' ? (diasMeses || 30) / 7 : PER_CAT[perCat(s)][3] * meses) * 100) / 100;
     return { s, g, pres, conPres: pres > 0, dif: pres - g };
   }).filter(f => f.g || f.conPres);
   const totPres = filas.filter(f => f.conPres).reduce((a, f) => a + conv(f.pres, f.s.moneda, mv), 0);
@@ -1671,12 +1676,12 @@ function informe() {
     <h1>Informe de gastos</h1>
     <p class="sub">Del ${r.texto} · generado el ${new Date().toLocaleDateString('es-CR')}</p>
     <div class="cifras">
-      <div><small>Presupuesto${meses > 1 ? ` (${meses} meses)` : ''}</small><b>${fmt(totPres, mv)}</b></div>
+      <div><small>Límites${meses > 1 ? ` (${meses} meses)` : ' del mes'}</small><b>${fmt(totPres, mv)}</b></div>
       <div><small>Gastado</small><b>${fmt(totGast, mv)}</b></div>
       <div><small>${neto < 0 ? 'Sobregiro' : 'Sobrante'}</small><b class="${neto < 0 ? 'mal' : 'bien'}">${fmt(Math.abs(neto), mv)}</b></div>
     </div>
     <h2>Por categoría</h2>
-    <table><thead><tr><th>Categoría</th><th>Presupuesto${meses > 1 ? ` (${meses} meses)` : ''}</th><th>Gastado</th><th>Sobrante / sobregiro</th></tr></thead><tbody>
+    <table><thead><tr><th>Categoría</th><th>Límite${meses > 1 ? ` (${meses} meses)` : ' del mes'}</th><th>Gastado</th><th>Sobrante / sobregiro</th></tr></thead><tbody>
       ${filas.map(f => `<tr><td>${esc(f.s.nombre)}</td><td>${f.conPres ? fmt(f.pres, f.s.moneda) : '—'}</td><td>${fmt(f.g, f.s.moneda)}</td>
         <td class="${f.conPres ? (f.dif < 0 ? 'mal' : 'bien') : ''}">${f.conPres ? fmt(f.dif, f.s.moneda) : '—'}</td></tr>`).join('')}
     </tbody></table>
