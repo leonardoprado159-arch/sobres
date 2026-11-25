@@ -1399,6 +1399,7 @@ function vistaAjustes() {
   <div class="titulo">Datos</div>
   <div class="grupo">
     ${filaCfg('descargar', 's3', 'Exportar datos', 'Excel, informe PDF o CSV', 'descargas')}
+    ${filaCfg('historial', 's6', 'Respaldos', 'Copia automática cada mes', 'respaldos')}
     ${filaCfg('recibo', 's5', 'Importar estado de cuenta', 'Movimientos del banco en Excel o CSV', 'importar')}
     ${filaCfg('barras', 's7', 'Resumen del período', 'Cierre de semana, quincena o mes', 'resumen')}
     ${filaCfg('historial', 's1', 'Historial', 'Promedios y meses anteriores', 'historial')}
@@ -1407,7 +1408,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 19`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 20`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1690,7 +1691,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 19</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 20</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1699,7 +1700,7 @@ const VISTAS = {
   suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos, catcfg: vistaCatCfg, grupos: vistaGrupos, cuentas: vistaCuentas, resumen: vistaResumen,
   sobre: vistaSobre, movimientos: vistaMovimientos, sinsobre: vistaSinSobre, historial: vistaHistorialGeneral,
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
-  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, importar: vistaImportar, notificaciones: vistaNotificaciones, guia: vistaGuia, acerca: vistaAcerca, descargas: vistaDescargas,
+  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, importar: vistaImportar, notificaciones: vistaNotificaciones, guia: vistaGuia, respaldos: vistaRespaldos, acerca: vistaAcerca, descargas: vistaDescargas,
 };
 const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Categorías'], ['ahorros', 'alcancia', 'Ahorros'], ['est', 'barras', 'Análisis'], ['movs', 'buscar', 'Buscar']];
 
@@ -2575,7 +2576,7 @@ async function accion(el) {
       $('#res-movs').innerHTML = resMovs();
       break;
     }
-    case 'ir': cerrarHoja(); cerrarPanel(); ir(el.dataset.v); break;
+    case 'ir': cerrarHoja(); cerrarPanel(); if (el.dataset.v === 'respaldos') S.resp = null; ir(el.dataset.v); break;   // los enlaces de los respaldos vencen: se piden de nuevo al entrar
     case 'atras': S.pila.pop(); render(true); break;
     case 'menu': $('#menu') ? cerrarMenu() : abrirMenu(); break;
     case 'cerrar-menu': break;
@@ -2606,6 +2607,7 @@ async function accion(el) {
     case 'sobrante-ahorro': hojaPasarAhorro(sobreDe(id)); break;
     case 'excel': await descargarExcel(); break;
     case 'imp-agregar': await agregarImportados(); break;
+    case 'respaldar-ya': { const d = await llamarAvisos({ accion: 'respaldar' }); toast(d.ok ? `Respaldo guardado · ${d.filas} registros` : 'No se pudo: ' + (d.motivo || 'error'), 4000); S.resp = null; render(); break; }
     case 'guia-cats': await agregarSugeridas('gasto'); break;
     case 'guia-ocultar': guiaGuardar({ oculta: true }); render(); toast('Los encontrás otra vez en Configuración → Primeros pasos', 4000); break;
     case 'probar-aviso': { const d = await llamarAvisos({ accion: 'probar' }); toast(d.ok ? 'Aviso enviado: debería llegar en unos segundos' : 'No se envió: ' + (d.motivo || 'error'), 5000); break; }
@@ -2858,6 +2860,30 @@ function vistaBloqueo() {
     <span class="interruptor"><input type="checkbox" data-bloqueo ${on ? 'checked' : ''}><span></span></span></label></div>
   <p class="nota">${on ? 'Activado en este dispositivo. Se pide al abrir la app y al volver después de un minuto fuera.' : 'Opcional. Si lo activás, la app pide Face ID o huella al abrirla y al volver después de un minuto fuera.'}</p>
   <p class="nota">Vale solo para este teléfono; en otro dispositivo se activa aparte. Al activarlo, el teléfono guarda una llave de acceso llamada "${NOMBRE_APP} (bloqueo)". Si algún día no funciona el Face ID, desde la pantalla de bloqueo podés cerrar sesión y entrar con tu correo y contraseña.</p>`;
+}
+
+// ================= respaldos =================
+// El servidor guarda un archivo con todos los datos el día 1 de cada mes y conserva los últimos 12.
+const MB = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+async function cargarRespaldos() {
+  try { const d = await llamarAvisos({ accion: 'respaldos' }); S.resp = { lista: d.respaldos || [], error: d.ok ? '' : d.motivo || 'no se pudo leer' }; }
+  catch (err) { S.resp = { lista: [], error: err.message }; }
+  if (vistaActual().v === 'respaldos') render();
+}
+function vistaRespaldos() {
+  if (modoDemo) return `${top('Respaldos', { atras: true })}<p class="nota">En el modo demo no hay respaldos.</p>`;
+  if (!S.resp) { S.resp = { cargando: true, lista: [] }; cargarRespaldos(); }
+  const r = S.resp;
+  return `${top('Respaldos', { atras: true })}
+  <p class="nota" style="margin:-6px 4px 12px">El día 1 de cada mes se guarda sola una copia de todos tus datos. Se conservan las últimas 12.</p>
+  ${r.cargando ? '<div class="vacio">Buscando tus respaldos…</div>' : r.error ? `<div class="resultado"><b>No pude leer los respaldos.</b><br><small>${esc(r.error)}</small></div>`
+    : r.lista.length ? `<section class="pila chica">${r.lista.map(x => { const [a, m] = x.nombre.split(/[-.]/); return `<a class="movu" href="${esc(x.url)}" download>
+      <span class="tile">${ico('descargar')}</span>
+      <span class="txt"><b>${MESES_L[Number(m) - 1]} ${a}</b><small>${x.fecha ? 'Guardado el ' + new Date(x.fecha).getDate() + ' ' + MESES[new Date(x.fecha).getMonth()] : ''}</small></span>
+      <span class="monto">${MB(x.bytes)}</span></a>`; }).join('')}</section>`
+    : '<div class="vacio">Todavía no hay respaldos. El primero se guarda el día 1 del mes, o hacé uno ahora.</div>'}
+  <div class="acciones" style="margin-top:14px"><button class="btn" data-accion="respaldar-ya">Hacer un respaldo ahora</button></div>
+  <p class="nota" style="margin-top:14px">Tocá un respaldo para bajarlo y guardarlo fuera de la app (Archivos o iCloud). El enlace sirve 10 minutos; si venció, salí y volvé a entrar a esta pantalla. El archivo trae categorías, cuentas, gastos, ingresos, traslados, metas y gastos fijos. Para restaurar uno hay que pedirlo: no se hace desde la app.</p>`;
 }
 
 // ================= primeros pasos =================

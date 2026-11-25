@@ -731,3 +731,4 @@ button, a, label, select { touch-action: manipulation; }
 .bienvenida li { display: flex; align-items: center; gap: 12px; background: var(--carta-2); border-radius: 16px; padding: 12px 14px; }
 .bienvenida li .i { width: 22px; height: 22px; flex: none; color: var(--bien); }
 @media (prefers-reduced-motion: reduce) { .guia-barra span, .guia .guia-num { animation: none !important; } }
+a.movu { text-decoration: none; color: inherit; }
