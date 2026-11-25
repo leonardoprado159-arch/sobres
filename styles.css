@@ -657,3 +657,15 @@ button.cajon-cab { width: 100%; text-align: left; }
 /* las filas que no están en pantalla no se dibujan hasta que hace falta */
 .movu { content-visibility: auto; contain-intrinsic-size: auto 70px; }
 button, a, label, select { touch-action: manipulation; }
+
+/* ---------- cuentas en Inicio: una tarjetita por cuenta ---------- */
+.rollo-cuentas { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; scroll-padding-left: 20px; margin: 0 -20px; padding: 0 20px 2px; }
+.rollo-cuentas::-webkit-scrollbar { display: none; }
+.mini-cuenta { flex: 1 0 158px; max-width: 240px; min-width: 0; display: flex; flex-direction: column; gap: 4px; text-align: left; background: var(--carta); border-radius: 20px; padding: 14px 16px; scroll-snap-align: start; }
+.mini-cuenta:active { transform: scale(.98); }
+.mini-cuenta .mc-top { display: flex; align-items: center; gap: 8px; color: var(--suave); font-size: 14px; font-weight: 500; min-width: 0; }
+.mini-cuenta .mc-top .i { width: 18px; height: 18px; flex: none; }
+.mini-cuenta .mc-top span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-cuenta b { font-size: 18px; font-weight: 700; white-space: nowrap; margin-top: 4px; }
+.mini-cuenta b.mal { color: var(--mal); }
+.mini-cuenta small { color: var(--tenue); font-size: 13px; }

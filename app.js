@@ -546,9 +546,12 @@ function bloqueAlertas() {
 function bloqueCuentas() {
   const sal = [...saldos().values()];
   if (!sal.length) return '';
-  return `<button class="tira-cuentas" data-accion="ir" data-v="cuentas" aria-label="Ver cuentas">
-    <span class="tira-rollo">${sal.map(c => { const x = textoSaldo(c); return `<span><small>${esc(c.m.nombre)}${x.sub === 'debés' ? ' · debés' : ''}</small><b class="${x.cls}">${x.t}</b></span>`; }).join('')}</span>
-    ${ico('derecha', 'fin')}</button>`;
+  // una tarjetita por cuenta; con muchas se desliza de lado
+  return `<div class="cab-mov" style="margin-top:22px"><h3 class="h-mov">Cuentas</h3><button class="enlace sin-raya" data-accion="ir" data-v="cuentas">Ver todas</button></div>
+  <div class="rollo-cuentas">${sal.map(c => { const x = textoSaldo(c), cred = esCredito(c.m); return `<button class="mini-cuenta" data-accion="ir" data-v="cuentas">
+      <span class="mc-top">${ico(tipoMetodo(c.m)[1])}<span>${esc(c.m.nombre)}</span></span>
+      <b class="${x.cls}">${x.t}</b>
+      <small>${cred ? (x.sub === 'debés' ? 'Debés' : 'Sin deuda') : 'Disponible'}</small></button>`; }).join('')}</div>`;
 }
 
 // ================= resumen de cierre =================
@@ -1276,7 +1279,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 10`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 11`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1549,7 +1552,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 10</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 11</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
