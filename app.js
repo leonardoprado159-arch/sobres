@@ -111,6 +111,11 @@ const diasParaCierre = () => Math.max(0, Math.ceil((ciclo().fin - new Date()) / 
 const enCiclo = (c) => S.gastos.filter(g => { const f = new Date(g.fecha); return f >= c.ini && f < c.fin; });
 const gastadoSobre = (s, lista) => lista.filter(g => g.sobre_id === s.id).reduce((a, g) => a + conv(g.monto, g.moneda, s.moneda), 0);
 
+// El límite de una categoría aplica a su propio período: mes, quincena o semana
+const PER_CAT = { mes: ['Mensual', 'este mes', 'al mes', 1], quincena: ['Quincenal', 'esta quincena', 'por quincena', 2], semana: ['Semanal', 'esta semana', 'por semana', 52 / 12] };
+const perCat = (s) => (PER_CAT[s.periodo] ? s.periodo : 'mes');
+const gastadoPer = (s) => gastadoSobre(s, gastosDe(periodo(perCat(s), 0)));
+
 // Estado de una categoría: con presupuesto dice sobrante o sobregiro; sin presupuesto, solo lo gastado
 function estadoSobre(s, gastado) {
   const p = Number(s.presupuesto) || 0;
@@ -804,21 +809,21 @@ function vistaSobres() {
   }
 
   const gastado = lista.reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
-  const presup = S.sobres.reduce((a, s) => a + conv(s.presupuesto, s.moneda, mv), 0);
+  const presup = S.sobres.reduce((a, s) => a + conv(s.presupuesto * PER_CAT[perCat(s)][3], s.moneda, mv), 0);
   const pendientes = S.gastos.filter(g => !g.sobre_id && new Date(g.fecha) >= c.ini).length;
   return `${cab}
   <div class="destacada">
     <div class="lado"><small>Gastado este mes</small><b>${fmt(gastado, mv)}</b></div>
-    <div class="lado der"><small>${presup > 0 ? 'Presupuestado' : 'Cierra en'}</small><b style="font-size:19px">${presup > 0 ? fmt(presup, mv) : diasParaCierre() + ' días'}</b></div>
+    <div class="lado der"><small>${presup > 0 ? 'Límites del mes' : 'Cierra en'}</small><b style="font-size:19px">${presup > 0 ? fmt(presup, mv) : diasParaCierre() + ' días'}</b></div>
   </div>
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre">
       ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin categoría' : 'gastos sin categoría'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
   ${porGrupo(S.sobres).map(([g, cats]) => `<div class="grupo-cat">${esc(g)}</div><section class="pila">
     ${cats.map(s => {
-      const e = estadoSobre(s, gastadoSobre(s, lista));
+      const e = estadoSobre(s, gastadoPer(s));
       return `<button class="item" data-accion="abrir-sobre" data-id="${s.id}">
         ${anillo(e.frac, e.aro, s.icono)}
-        <span class="nombre">${esc(s.nombre)}${e.conPres ? `<small>Presupuesto ${fmt(s.presupuesto, s.moneda)}</small>` : ''}</span>
+        <span class="nombre">${esc(s.nombre)}${e.conPres ? `<small>Límite ${fmt(s.presupuesto, s.moneda)} ${PER_CAT[perCat(s)][2]}</small>` : ''}</span>
         <span class="valor"><b class="${e.cls}">${fmt(e.monto, s.moneda)}</b><span>${e.etiqueta}</span></span>
       </button>`;
     }).join('')}</section>`).join('')}
@@ -922,7 +927,7 @@ function vistaSobre(p) {
   const s = sobreDe(p.id);
   if (!s) { S.pila.pop(); return render(); }
   const c = ciclo(), lista = enCiclo(c).filter(g => g.sobre_id === s.id);
-  const g = gastadoSobre(s, lista), e = estadoSobre(s, g);
+  const g = gastadoPer(s), e = estadoSobre(s, g), pc = PER_CAT[perCat(s)];
   const hist = p.seg === 'hist';
   return `
   <header class="top">
@@ -931,8 +936,8 @@ function vistaSobre(p) {
   </header>
   <div class="tarjeta-sobre">
     <h2><span class="ico-sobre ${e.cls === 'mal' ? 'mal' : ''}">${ico(s.icono)}</span>${esc(s.nombre)}</h2>
-    ${e.conPres ? `<p><b>${fmt(s.presupuesto, s.moneda)}</b> presupuestados</p>` : `<p>Sin presupuesto · <button class="enlace" data-accion="presupuesto" data-id="${s.id}">poner uno</button></p>`}
-    <p><b>${fmt(g, s.moneda)}</b> gastados</p>
+    ${e.conPres ? `<p><b>${fmt(s.presupuesto, s.moneda)}</b> de límite ${pc[2]}</p>` : `<p>Sin límite · <button class="enlace" data-accion="presupuesto" data-id="${s.id}">poner uno</button></p>`}
+    <p><b>${fmt(g, s.moneda)}</b> gastados ${pc[1]}</p>
     ${e.conPres ? `<div class="saldo"><b class="${e.cls}">${fmt(e.monto, s.moneda)}</b><span>${e.etiqueta === 'sobregiro' ? 'de sobregiro' : 'disponibles'}</span></div>` : ''}
   </div>
   <div class="cab-mov">
@@ -945,10 +950,10 @@ function vistaSobre(p) {
 }
 
 function abrirMenuSobre(s) {
-  const e = estadoSobre(s, gastadoSobre(s, enCiclo(ciclo())));
+  const e = estadoSobre(s, gastadoPer(s));
   const capa = document.createElement('div');
   capa.innerHTML = `<div class="capa-menu" data-accion="cerrar-menu"></div><div class="menu" role="menu">
-    <button role="menuitem" data-accion="presupuesto" data-id="${s.id}">${e.conPres ? 'Cambiar presupuesto' : 'Poner presupuesto'} ${ico('moneda')}</button>
+    <button role="menuitem" data-accion="presupuesto" data-id="${s.id}">${e.conPres ? 'Cambiar límite' : 'Poner límite'} ${ico('moneda')}</button>
     ${e.cls === 'bien' && e.monto > 0 ? `<button role="menuitem" data-accion="sobrante-ahorro" data-id="${s.id}">Pasar sobrante a ahorro ${ico('alcancia')}</button>` : ''}
     <button role="menuitem" data-accion="seg" data-seg="hist">Ver historial ${ico('historial')}</button>
     <button role="menuitem" data-accion="editar-sobre" data-id="${s.id}">Editar categoría ${ico('pincel')}</button></div>`;
@@ -1290,7 +1295,8 @@ function hojaSobre(s = null, tipo = null) {
     <div class="campos">
       <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(s?.nombre || '')}" placeholder="${esIng ? 'Salario' : 'Supermercado'}" autofocus autocomplete="off"></label>
       <label class="campo"><span>Grupo</span><input name="grupo" value="${esc(s?.grupo || '')}" placeholder="Opcional" list="grupos-cat" autocomplete="off"></label>
-      ${esIng ? '' : `<label class="campo"><span>Presupuesto</span><input name="presupuesto" inputmode="decimal" value="${s && s.presupuesto > 0 ? s.presupuesto : ''}" placeholder="Sin presupuesto"></label>
+      ${esIng ? '' : `<label class="campo"><span>Límite</span><input name="presupuesto" inputmode="decimal" value="${s && s.presupuesto > 0 ? s.presupuesto : ''}" placeholder="Sin límite"></label>
+      <label class="campo"><span>Período</span><select name="periodo">${Object.entries(PER_CAT).map(([k, v]) => `<option value="${k}" ${(s ? perCat(s) : 'mes') === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></label>
       <label class="campo"><span>Moneda</span><select name="moneda"><option value="CRC" ${s?.moneda !== 'USD' ? 'selected' : ''}>Colones ₡</option><option value="USD" ${s?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>`}
     </div>
     <datalist id="grupos-cat">${grupos.map(g => `<option value="${esc(g)}">`).join('')}</datalist>
@@ -1304,7 +1310,7 @@ function hojaSobre(s = null, tipo = null) {
     const nombre = f.nombre.value.trim();
     if (!nombre) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
     const fila = { nombre, grupo: f.grupo.value.trim() || null, icono: valorRadio(f, 'icono') || 'carrito', tipo };
-    if (!esIng) { fila.presupuesto = leerMontoCampo(f.presupuesto.value); fila.moneda = f.moneda.value; }
+    if (!esIng) { fila.presupuesto = leerMontoCampo(f.presupuesto.value); fila.moneda = f.moneda.value; fila.periodo = f.periodo.value; }
     const lista = esIng ? S.catsIng : S.sobres;
     if (s) Object.assign(s, await api.actualizar('sobres', s.id, fila));
     else lista.push(await api.insertar('sobres', { ...fila, orden: S.sobres.length + S.catsIng.length }));
@@ -1448,23 +1454,24 @@ function hojaAhorro(a = null) {
 }
 
 function hojaPresupuesto(s) {
-  const f = abrirHoja(`Presupuesto de ${s.nombre}`, `
+  const f = abrirHoja(`Límite de ${s.nombre}`, `
     <div class="monto-grande">
       <div class="fila-monto"><span class="simbolo">${s.moneda === 'USD' ? '$' : '₡'}</span>
-        <input name="monto" inputmode="decimal" placeholder="0" value="${s.presupuesto > 0 ? s.presupuesto : ''}" autofocus aria-label="Presupuesto mensual"></div>
-      <small class="nota" style="margin:6px 0 0">por mes · dejalo en 0 para no tener presupuesto</small>
+        <input name="monto" inputmode="decimal" placeholder="0" value="${s.presupuesto > 0 ? s.presupuesto : ''}" autofocus aria-label="Límite"></div>
+      <div class="alternar" role="radiogroup" aria-label="Período">${Object.entries(PER_CAT).map(([k, v]) => `<label><input type="radio" name="periodo" value="${k}" ${perCat(s) === k ? 'checked' : ''}><span>${v[0]}</span></label>`).join('')}</div>
+      <small class="nota" style="margin:8px 0 0">dejalo en 0 para no tener límite</small>
     </div>
     <div class="acciones"><button type="submit" class="btn primario">Guardar</button></div>`);
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
-    Object.assign(s, await api.actualizar('sobres', s.id, { presupuesto: leerMontoCampo(f.monto.value) }));
-    cerrarHoja(); render(); toast('Presupuesto guardado');
+    Object.assign(s, await api.actualizar('sobres', s.id, { presupuesto: leerMontoCampo(f.monto.value), periodo: valorRadio(f, 'periodo') || 'mes' }));
+    cerrarHoja(); render(); toast('Límite guardado');
   });
 }
 
 // El sobrante sale de la categoría como un movimiento y entra al meta de ahorro elegido
 function hojaPasarAhorro(s) {
-  const e = estadoSobre(s, gastadoSobre(s, enCiclo(ciclo())));
+  const e = estadoSobre(s, gastadoPer(s));
   if (!S.ahorros.length) { toast('Primero creá una meta de ahorro en la pestaña Ahorros'); return; }
   const f = abrirHoja('Pasar a ahorro', `
     <p class="nota" style="text-align:center;margin:0 0 4px">Sobrante de ${esc(s.nombre)}: <b class="bien">${fmt(e.monto, s.moneda)}</b></p>
