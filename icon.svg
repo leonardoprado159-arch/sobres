@@ -1,5 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#1f6b4f"/>
-  <rect x="104" y="150" width="304" height="212" rx="28" fill="#f4f3ef"/>
-  <path d="M112 166 L256 270 L400 166" fill="none" stroke="#1f6b4f" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="512" height="512" rx="112" fill="#0d0d0d"/>
+  <polyline points="96,176 168,352 240,214 312,352 372,204" fill="none" stroke="#7ee8a3" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#7ee8a3"><circle cx="372.0" cy="204.0" r="23.0"/><circle cx="374.6" cy="197.4" r="22.3"/><circle cx="377.4" cy="191.0" r="21.6"/><circle cx="380.3" cy="184.9" r="20.9"/><circle cx="383.3" cy="179.1" r="20.2"/><circle cx="386.5" cy="173.7" r="19.6"/><circle cx="389.8" cy="168.6" r="18.9"/><circle cx="393.1" cy="163.9" r="18.2"/><circle cx="396.5" cy="159.6" r="17.5"/><circle cx="400.0" cy="155.7" r="16.8"/><circle cx="403.5" cy="152.3" r="16.1"/><circle cx="407.0" cy="149.4" r="15.4"/><circle cx="410.5" cy="147.0" r="14.7"/><circle cx="414.0" cy="145.2" r="14.0"/><circle cx="417.4" cy="143.9" r="13.3"/><circle cx="420.8" cy="143.2" r="12.7"/><circle cx="424.1" cy="143.1" r="12.0"/><circle cx="427.4" cy="143.7" r="11.3"/><circle cx="430.5" cy="144.9" r="10.6"/><circle cx="433.5" cy="146.9" r="9.9"/><circle cx="436.4" cy="149.6" r="9.2"/><circle cx="439.0" cy="153.0" r="8.5"/><circle cx="441.6" cy="157.2" r="7.8"/><circle cx="443.9" cy="162.2" r="7.1"/><circle cx="446.0" cy="168.0" r="6.4"/></g>
+  <g stroke="#7ee8a3" stroke-width="12" stroke-linecap="round">
+    <line x1="462" y1="132" x2="482" y2="112"/><line x1="470" y1="168" x2="498" y2="166"/><line x1="440" y1="104" x2="444" y2="78"/>
+  </g>
 </svg>

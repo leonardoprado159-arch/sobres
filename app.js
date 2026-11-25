@@ -832,36 +832,65 @@ async function guardarCfg(cambios) {
   aplicarTema();
 }
 
+// ---------- descargas (con rango de fechas) ----------
+const aISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const deISO = (s, fin = false) => { const [y, m, d] = s.split('-').map(Number); return fin ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d); };
+const fechaCorta = (d) => `${d.getDate()} ${MESES[d.getMonth()]} ${d.getFullYear()}`;
+
+function rangoPreset(k) {
+  const hoy = new Date(), c = ciclo();
+  if (k === 'pasado') { const p = ciclo(-1); return { desde: aISO(p.ini), hasta: aISO(new Date(p.fin - 864e5)) }; }
+  if (k === 'anio') return { desde: `${hoy.getFullYear()}-01-01`, hasta: aISO(hoy) };
+  if (k === 'todo') { const u = S.gastos[S.gastos.length - 1]; return { desde: aISO(u ? new Date(u.fecha) : hoy), hasta: aISO(hoy) }; }
+  return { desde: aISO(c.ini), hasta: aISO(hoy) };
+}
+function rangoDescarga() {
+  if (!S.desc) S.desc = { ...rangoPreset('mes'), preset: 'mes' };
+  let desde = deISO(S.desc.desde), hasta = deISO(S.desc.hasta, true);
+  if (desde > hasta) [desde, hasta] = [deISO(S.desc.hasta), deISO(S.desc.desde, true)];
+  return { desde, hasta, texto: `${fechaCorta(desde)} al ${fechaCorta(hasta)}`, archivo: `${aISO(desde)} a ${aISO(hasta)}` };
+}
+const gastosRango = (r) => S.gastos.filter(g => { const f = new Date(g.fecha); return f >= r.desde && f <= r.hasta; });
+
+function vistaDescargas() {
+  const r = rangoDescarga(), n = gastosRango(r).length;
+  const chip = (k, txt) => `<label><input type="radio" name="preset" value="${k}" data-desc-preset ${S.desc.preset === k ? 'checked' : ''}><span>${txt}</span></label>`;
+  return `${top('Descargar datos', { atras: true })}
+  <div class="titulo">Fechas</div>
+  <div class="chips" role="radiogroup" style="margin-bottom:12px">${chip('mes', 'Este mes')}${chip('pasado', 'Mes pasado')}${chip('anio', 'Este año')}${chip('todo', 'Todo')}</div>
+  <div class="campos">
+    <label class="campo"><span>Desde</span><input type="date" value="${S.desc.desde}" data-desc="desde"></label>
+    <label class="campo"><span>Hasta</span><input type="date" value="${S.desc.hasta}" data-desc="hasta"></label>
+  </div>
+  <p class="nota">${n} ${n === 1 ? 'gasto' : 'gastos'} del ${r.texto}.</p>
+  <div class="titulo" style="margin-top:26px">Descargar</div>
+  <div class="grupo">
+    <button class="fila" data-accion="excel">${ico('lista')}<span class="txt"><b>Excel</b><small>Resumen por mes y sobre, gastos, sobres, ahorros y suscripciones</small></span>${ico('descargar', 'fin')}</button>
+    <button class="fila" data-accion="informe">${ico('recibo')}<span class="txt"><b>Informe en PDF</b><small>Totales, tabla por sobre y detalle de gastos</small></span>${ico('descargar', 'fin')}</button>
+    <button class="fila" data-accion="exportar">${ico('copiar')}<span class="txt"><b>CSV</b><small>Solo los gastos, en una tabla</small></span>${ico('descargar', 'fin')}</button>
+  </div>
+  <p class="nota">Para el PDF se abre la ventana de impresión: en el iPhone tocá Compartir → Guardar en Archivos.</p>`;
+}
+
 function exportar() {
+  const r = rangoDescarga();
   const filas = [['fecha', 'comercio', 'monto', 'moneda', 'sobre', 'metodo', 'origen', 'nota']];
-  for (const g of S.gastos) filas.push([g.fecha.slice(0, 16).replace('T', ' '), g.comercio || '', g.monto, g.moneda,
+  for (const g of gastosRango(r)) filas.push([g.fecha.slice(0, 16).replace('T', ' '), g.comercio || '', g.monto, g.moneda,
     sobreDe(g.sobre_id)?.nombre || '', metodoDe(g.metodo_id)?.nombre || '', FUENTES[g.fuente], /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '']);
-  const csv = '﻿' + filas.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  const csv = '﻿' + filas.map(f => f.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = `${NOMBRE_APP} gastos ${hoyLocal()}.csv`;
+  a.download = `${NOMBRE_APP} gastos ${r.archivo}.csv`;
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-// ---------- descargas ----------
-function vistaDescargas() {
-  return `${top('Descargar datos', { atras: true })}
-  <div class="titulo">Para analizar</div>
-  <div class="grupo">
-    <button class="fila" data-accion="excel">${ico('lista')}<span class="txt"><b>Excel completo</b><small>Resumen por mes y sobre, gastos, sobres, ahorros y suscripciones</small></span>${ico('descargar', 'fin')}</button>
-    <button class="fila" data-accion="exportar">${ico('recibo')}<span class="txt"><b>Gastos en CSV</b><small>Una sola tabla, para cualquier programa</small></span>${ico('descargar', 'fin')}</button>
-  </div>
-  <div class="titulo" style="margin-top:26px">Informe en PDF</div>
-  <div class="campos"><label class="campo"><span>Mes</span><select id="informe-ciclo">
-    ${Array.from({ length: 12 }, (_, i) => `<option value="${-i}">${nombreCiclo(ciclo(-i).ini)}</option>`).join('')}</select></label></div>
-  <div class="acciones"><button class="btn primario" data-accion="informe">Generar informe</button></div>
-  <p class="nota">Se abre la ventana de impresión: en el iPhone tocá Compartir → Guardar en Archivos para tenerlo en PDF.</p>`;
-}
-
-function filasResumen(desde = -11) {
+// Una fila por mes y sobre, contando solo los gastos dentro del rango
+function filasResumen(r) {
   const filas = [];
-  for (let d = 0; d >= desde; d--) {
-    const c = ciclo(d), lista = enCiclo(c);
+  for (let d = 0; d >= -14; d--) {
+    const c = ciclo(d);
+    if (c.fin <= r.desde || c.ini > r.hasta) continue;
+    const lista = enCiclo(c).filter(g => { const f = new Date(g.fecha); return f >= r.desde && f <= r.hasta; });
     for (const s of S.sobres) {
       const g = gastadoSobre(s, lista), e = estadoSobre(s, g);
       if (!g && !e.conPres) continue;
@@ -881,19 +910,20 @@ async function descargarExcel() {
       document.head.appendChild(sc);
     });
   }
+  const r = rangoDescarga();
   const X = window.XLSX, libro = X.utils.book_new();
   const hoja = (nombre, filas, anchos) => {
     const h = X.utils.json_to_sheet(filas, { cellDates: true });
     h['!cols'] = anchos.map(w => ({ wch: w }));
     X.utils.book_append_sheet(libro, h, nombre);
   };
-  hoja('Resumen', filasResumen().map(r => ({
-    'Mes': r.mes, 'Inicio': r.inicio, 'Sobre': r.s.nombre, 'Moneda': r.s.moneda,
-    'Presupuesto': r.e.conPres ? Number(r.s.presupuesto) : null, 'Gastado': Math.round(r.gastado * 100) / 100,
-    'Sobrante (+) / Sobregiro (−)': r.e.conPres ? Math.round((r.s.presupuesto - r.gastado) * 100) / 100 : null,
-    'Estado': r.e.conPres ? r.e.etiqueta : 'sin presupuesto', 'Cantidad de gastos': r.n,
+  hoja('Resumen', filasResumen(r).map(f => ({
+    'Mes': f.mes, 'Inicio': f.inicio, 'Sobre': f.s.nombre, 'Moneda': f.s.moneda,
+    'Presupuesto': f.e.conPres ? Number(f.s.presupuesto) : null, 'Gastado': Math.round(f.gastado * 100) / 100,
+    'Sobrante (+) / Sobregiro (−)': f.e.conPres ? Math.round((f.s.presupuesto - f.gastado) * 100) / 100 : null,
+    'Estado': f.e.conPres ? f.e.etiqueta : 'sin presupuesto', 'Cantidad de gastos': f.n,
   })), [22, 12, 20, 8, 14, 14, 26, 16, 10]);
-  hoja('Gastos', S.gastos.map(g => {
+  hoja('Gastos', gastosRango(r).map(g => {
     const s = sobreDe(g.sobre_id);
     return {
       'Fecha': new Date(g.fecha), 'Comercio': g.comercio || '', 'Monto': Number(g.monto), 'Moneda': g.moneda,
@@ -911,31 +941,35 @@ async function descargarExcel() {
     'Suscripción': s.nombre, 'Monto': Number(s.monto), 'Moneda': s.moneda, 'Frecuencia': s.frecuencia,
     'Día de cobro': s.dia_cobro, 'Próximo cobro': proximoCobro(s), 'Sobre': sobreDe(s.sobre_id)?.nombre || '', 'Activa': s.activa ? 'Sí' : 'No',
   })), [22, 12, 8, 12, 12, 14, 18, 8]);
-  X.writeFile(libro, `${NOMBRE_APP} ${hoyLocal()}.xlsx`, { cellDates: true });
+  X.writeFile(libro, `${NOMBRE_APP} ${r.archivo}.xlsx`, { cellDates: true });
   toast('Excel descargado');
 }
 
-function informe(desplazar = 0) {
-  const c = ciclo(desplazar), lista = enCiclo(c), mv = S.cfg.moneda_vista;
-  const filas = filasResumen(desplazar).filter(r => r.inicio.getTime() === c.ini.getTime());
-  const conPres = filas.filter(r => r.e.conPres);
-  const totPres = conPres.reduce((a, r) => a + conv(r.s.presupuesto, r.s.moneda, mv), 0);
+function informe() {
+  const r = rangoDescarga(), lista = gastosRango(r), mv = S.cfg.moneda_vista;
+  // meses que toca el rango: el presupuesto del período es el mensual por esa cantidad
+  let meses = 0; for (let d = 0; d >= -14; d--) { const c = ciclo(d); if (c.fin > r.desde && c.ini <= r.hasta) meses++; }
+  meses = Math.max(1, meses);
+  const filas = S.sobres.map(s => {
+    const g = gastadoSobre(s, lista), pres = Number(s.presupuesto) * meses;
+    return { s, g, pres, conPres: pres > 0, dif: pres - g };
+  }).filter(f => f.g || f.conPres);
+  const totPres = filas.filter(f => f.conPres).reduce((a, f) => a + conv(f.pres, f.s.moneda, mv), 0);
   const totGast = lista.reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
-  const totGastPres = conPres.reduce((a, r) => a + conv(r.gastado, r.s.moneda, mv), 0);
-  const neto = totPres - totGastPres;
+  const neto = totPres - filas.filter(f => f.conPres).reduce((a, f) => a + conv(f.g, f.s.moneda, mv), 0);
   const el = $('#informe') || Object.assign(document.body.appendChild(document.createElement('div')), { id: 'informe' });
   el.innerHTML = `
     <h1>Informe de gastos</h1>
-    <p class="sub"><span style="text-transform:capitalize">${nombreCiclo(c.ini)}</span> · generado el ${new Date().toLocaleDateString('es-CR')}</p>
+    <p class="sub">Del ${r.texto} · generado el ${new Date().toLocaleDateString('es-CR')}</p>
     <div class="cifras">
-      <div><small>Presupuesto</small><b>${fmt(totPres, mv)}</b></div>
+      <div><small>Presupuesto${meses > 1 ? ` (${meses} meses)` : ''}</small><b>${fmt(totPres, mv)}</b></div>
       <div><small>Gastado</small><b>${fmt(totGast, mv)}</b></div>
       <div><small>${neto < 0 ? 'Sobregiro' : 'Sobrante'}</small><b class="${neto < 0 ? 'mal' : 'bien'}">${fmt(Math.abs(neto), mv)}</b></div>
     </div>
     <h2>Por sobre</h2>
-    <table><thead><tr><th>Sobre</th><th>Presupuesto</th><th>Gastado</th><th>Sobrante / sobregiro</th></tr></thead><tbody>
-      ${filas.map(r => `<tr><td>${esc(r.s.nombre)}</td><td>${r.e.conPres ? fmt(r.s.presupuesto, r.s.moneda) : '—'}</td><td>${fmt(r.gastado, r.s.moneda)}</td>
-        <td class="${r.e.cls}">${r.e.conPres ? (r.e.etiqueta === 'sobregiro' ? '−' : '') + fmt(r.e.monto, r.s.moneda) : '—'}</td></tr>`).join('')}
+    <table><thead><tr><th>Sobre</th><th>Presupuesto${meses > 1 ? ` (${meses} meses)` : ''}</th><th>Gastado</th><th>Sobrante / sobregiro</th></tr></thead><tbody>
+      ${filas.map(f => `<tr><td>${esc(f.s.nombre)}</td><td>${f.conPres ? fmt(f.pres, f.s.moneda) : '—'}</td><td>${fmt(f.g, f.s.moneda)}</td>
+        <td class="${f.conPres ? (f.dif < 0 ? 'mal' : 'bien') : ''}">${f.conPres ? fmt(f.dif, f.s.moneda) : '—'}</td></tr>`).join('')}
     </tbody></table>
     ${S.ahorros.length ? `<h2>Sobres de ahorro</h2><table><thead><tr><th>Ahorro</th><th>Meta</th><th>Ahorrado</th><th>Avance</th></tr></thead><tbody>
       ${S.ahorros.map(a => `<tr><td>${esc(a.nombre)}</td><td>${a.meta > 0 ? fmt(a.meta, a.moneda) : '—'}</td><td>${fmt(a.ahorrado, a.moneda)}</td><td>${a.meta > 0 ? Math.round(a.ahorrado / a.meta * 100) + '%' : '—'}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -985,7 +1019,7 @@ async function accion(el) {
     case 'presupuesto': hojaPresupuesto(sobreDe(id)); break;
     case 'sobrante-ahorro': hojaPasarAhorro(sobreDe(id)); break;
     case 'excel': await descargarExcel(); break;
-    case 'informe': informe(Number($('#informe-ciclo')?.value || 0)); break;
+    case 'informe': informe(); break;
     case 'editar-gasto': hojaGasto(S.gastos.find(g => g.id === id)); break;
     case 'editar-sub': hojaSub(S.subs.find(s => s.id === id)); break;
     case 'nuevo-metodo': hojaMetodo(); break;
@@ -1037,6 +1071,8 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('change', async (e) => {
   const t = e.target;
+  if (t.dataset.desc) { if (t.value) { S.desc[t.dataset.desc] = t.value; S.desc.preset = ''; render(); } return; }
+  if (t.hasAttribute('data-desc-preset')) { S.desc = { ...rangoPreset(t.value), preset: t.value }; render(); return; }
   try {
     if (t.dataset.cfg) {
       let v = t.dataset.cfg === 'tipo_cambio' ? leerMontoCampo(t.value) : Number(t.value);
