@@ -65,6 +65,10 @@ async function cargarTodo() {
   const [config, sobres, metodos, gastos, reglas, subs, ahorros, ingresos, fijos] = await Promise.all(
     ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos'].map(t => api.listar(t)));
   S.cfg = config[0];
+  if (S.cfg.dia_cierre !== 1) {
+    S.cfg.dia_cierre = 1;
+    api.actualizar('config', S.cfg.user_id, { dia_cierre: 1 }, 'user_id').catch(() => {});
+  }
   const orden = (a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.creado).localeCompare(String(b.creado));
   S.sobres = sobres.filter(s => !s.archivado).sort(orden);
   S.metodos = metodos.sort(orden);
@@ -306,7 +310,7 @@ function vistaInicio() {
   }
   return `
   <header class="top inicio">
-    <button class="marca-btn" data-accion="panel" aria-label="Abrir menú"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b><small>${nombreCiclo(c.ini)}</small></span></button>
+    <button class="marca-btn" data-accion="panel" aria-label="Abrir menú"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b></span></button>
     <button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>
   </header>
   <section class="tarjeta-balance">
@@ -820,7 +824,6 @@ function vistaAjustes() {
     ${filaAjuste('moneda', 'Monedas', 'monedas', S.cfg.moneda_vista)}
     ${filaAjuste('tarjeta', 'Métodos de pago', 'metodos', S.metodos.length || '')}
     ${filaAjuste('monedas', 'Ingresos fijos', 'fijos', S.fijos.length || '')}
-    ${filaAjuste('reinicio', 'Reinicio automático', 'reinicio', 'Día ' + S.cfg.dia_cierre)}
   </div>
   <div class="titulo">General</div>
   <div class="grupo">
@@ -1108,11 +1111,8 @@ function abrirHoja(titulo, cuerpo) {
   const m = f.querySelector('.monto-grande input');
   f.querySelectorAll(SEL_MONTO).forEach(i => { if (i.value) i.value = numATexto(i.value); });
   if (m) {
-    m.insertAdjacentHTML('afterend', '<span class="dec" aria-hidden="true"></span>');
-    const dec = m.nextElementSibling;
     const ajustar = () => {
-      dec.textContent = decimalesFaltan(m.value);
-      const largo = (m.value || m.placeholder).length + dec.textContent.length;
+      const largo = (m.value || m.placeholder).length;
       // los montos largos bajan de tamaño para caber en una línea
       const px = largo > 13 ? 30 : largo > 10 ? 38 : largo > 8 ? 46 : 54;
       m.closest('.fila-monto').style.setProperty('--tam', px + 'px');
@@ -1758,7 +1758,7 @@ document.addEventListener('input', (e) => {
 document.addEventListener('focusout', (e) => {
   const t = e.target;
   // en los campos chicos, al salir se completan los decimales
-  if (t.matches && t.matches(SEL_MONTO) && !t.closest('.monto-grande') && t.value) { const n = leerMontoCampo(t.value); t.value = n ? numATexto(n) + (t.value.includes(',') ? '' : ',00') : ''; if (/,\d$/.test(t.value)) t.value += '0'; }
+  if (t.matches && t.matches(SEL_MONTO) && !t.closest('.monto-grande') && t.value) { const n = leerMontoCampo(t.value); t.value = n ? numATexto(n) : ''; }
 });
 document.addEventListener('input', (e) => {
   if (!e.target.matches || !e.target.matches('[data-buscar]')) return;
