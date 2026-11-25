@@ -926,27 +926,41 @@ function filaMov(g, s) {
 function vistaSobre(p) {
   const s = sobreDe(p.id);
   if (!s) { S.pila.pop(); return render(); }
-  const c = ciclo(), lista = enCiclo(c).filter(g => g.sobre_id === s.id);
-  const g = gastadoPer(s), e = estadoSobre(s, g), pc = PER_CAT[perCat(s)];
+  const per = periodo(perCat(s), 0), pc = PER_CAT[perCat(s)];
+  const lista = gastosDe(per).filter(g => g.sobre_id === s.id);
+  const g = gastadoSobre(s, lista), e = estadoSobre(s, g), lim = Number(s.presupuesto) || 0;
+  const ahora = new Date();
+  const restan = Math.max(1, Math.ceil((per.fin - ahora) / 864e5));
+  const pasados = Math.max(1, Math.floor((ahora - per.ini) / 864e5) + 1);
+  const pct = lim > 0 ? Math.round(g / lim * 100) : 0;
+  const pasado = e.cls === 'mal';
   const hist = p.seg === 'hist';
   return `
   <header class="top">
     <button class="redondo" data-accion="atras" aria-label="Volver">${ico('izquierda')}</button>
-    <button class="redondo" data-accion="menu-sobre" data-id="${s.id}" aria-label="Opciones de la categoría">${ico('puntos')}</button>
+    <div class="titulo-doble"><b>${esc(s.nombre)}</b><small>${e.conPres ? `Límite ${pc[0].toLowerCase()}` : 'Sin límite'}</small></div>
+    <button class="redondo" data-accion="editar-sobre" data-id="${s.id}" aria-label="Editar categoría">${ico('lapiz')}</button>
+    <button class="redondo" data-accion="menu-sobre" data-id="${s.id}" aria-label="Más opciones">${ico('puntos')}</button>
   </header>
-  <div class="tarjeta-sobre">
-    <h2><span class="ico-sobre ${e.cls === 'mal' ? 'mal' : ''}">${ico(s.icono)}</span>${esc(s.nombre)}</h2>
-    ${e.conPres ? `<p><b>${fmt(s.presupuesto, s.moneda)}</b> de límite ${pc[2]}</p>` : `<p>Sin límite · <button class="enlace" data-accion="presupuesto" data-id="${s.id}">poner uno</button></p>`}
-    <p><b>${fmt(g, s.moneda)}</b> gastados ${pc[1]}</p>
-    ${e.conPres ? `<div class="saldo"><b class="${e.cls}">${fmt(e.monto, s.moneda)}</b><span>${e.etiqueta === 'sobregiro' ? 'de sobregiro' : 'disponibles'}</span></div>` : ''}
-  </div>
-  <div class="cab-mov">
-    <span class="titulo" style="margin:0">${hist ? 'Historial' : 'Últimos movimientos'}</span>
-    <button class="redondo chico" data-accion="seg" data-seg="${hist ? 'mes' : 'hist'}" aria-label="${hist ? 'Ver movimientos' : 'Ver historial'}">${ico(hist ? 'lista' : 'historial')}</button>
-  </div>
+  <section class="tarjeta-cat">
+    <div class="tc-cab"><span class="tile ${pasado ? 'mal' : 'ing'}">${ico(s.icono)}</span>
+      <span><b style="text-transform:capitalize">${per.nombre}</b><small>${restan} ${restan === 1 ? 'día restante' : 'días restantes'}</small></span></div>
+    <small class="tc-etq">Total gastado</small>
+    <div class="tc-monto"><b class="${pasado ? 'mal' : ''}">${fmt(g, s.moneda)}</b>${e.conPres ? `<span>/ ${fmt(lim, s.moneda)}</span>` : ''}</div>
+    ${e.conPres ? `<div class="barra ${pasado ? 'excedido' : ''}"><span style="width:${Math.min(100, pct)}%"></span></div>
+    <div class="tc-pie"><span class="${pasado ? 'mal' : ''}">${pasado ? `Te pasaste por ${fmt(e.monto, s.moneda)}` : `Te quedan ${fmt(e.monto, s.moneda)}`}</span><span>${pct}%</span></div>`
+      : `<button class="enlace" data-accion="presupuesto" data-id="${s.id}">Poner un límite</button>`}
+  </section>
+  <button class="fila-ritmo" data-accion="seg" data-seg="${hist ? 'mes' : 'hist'}" aria-label="${hist ? 'Ver movimientos' : 'Ver historial'}">
+    <span class="tile">${ico(pasado ? 'sube' : 'baja')}</span>
+    <span class="txt"><b>${fmt(g / pasados, s.moneda)} / día</b>
+      <small>${e.conPres ? (pasado ? 'Ya superaste el límite de este período' : `Meta: ${fmt(e.monto / restan, s.moneda)} / día`) : 'Ritmo de gasto en este período'}</small></span>
+    ${ico(hist ? 'lista' : 'historial', 'fin')}
+  </button>
+  <div class="cab-mov" style="margin-top:22px"><h3 class="h-mov" style="font-size:18px">${hist ? 'Historial' : `Movimientos (${lista.length})`}</h3></div>
   ${hist ? bloqueHistorial(s) : (lista.length
     ? `<div class="grupo movs">${lista.map(x => filaMov(x, s)).join('')}</div>`
-    : `<div class="vacio">${ico('recibo')}<div>Todavía no hay gastos este mes.</div></div>`)}`;
+    : `<div class="tarjeta-vacia">Todavía no hay movimientos en este período.</div>`)}`;
 }
 
 function abrirMenuSobre(s) {
