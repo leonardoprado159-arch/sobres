@@ -56,7 +56,7 @@ const decimalesFaltan = (v) => { const i = v.indexOf(','); return !v ? '' : i < 
 // ================= estado =================
 const S = {
   cfg: null, sobres: [], metodos: [], gastos: [], reglas: [], subs: [], ahorros: [], usuario: null,
-  ingresos: [], fijos: [], mov: { filtro: 'todo', q: '' }, est: { d: 0, sel: 5 },
+  ingresos: [], fijos: [], mov: { filtro: 'todo', q: '' }, est: { per: 'mes', d: 0, sel: 5 },
   tab: 'inicio', pila: [],
 };
 const vistaActual = () => S.pila[S.pila.length - 1] || { v: S.tab };
@@ -486,89 +486,247 @@ function colorDeSobre(i) {
   return i < MAX_SERIES - 1 ? `var(--s${i + 1})` : null;
 }
 
-function datosEst(d) {
-  const c = ciclo(d), mv = S.cfg.moneda_vista, lista = enCiclo(c);
-  const val = (g) => conv(g.monto, g.moneda, mv);
-  const filas = []; let otros = 0;
-  S.sobres.forEach((s, i) => {
-    const v = lista.filter(g => g.sobre_id === s.id).reduce((a, g) => a + val(g), 0);
-    if (v <= 0) return;
-    const color = colorDeSobre(i);
-    if (color) filas.push({ nombre: s.nombre, icono: s.icono, v, color }); else otros += v;
-  });
-  if (otros > 0) filas.push({ nombre: 'Otros sobres', icono: 'lista', v: otros, color: 'var(--s-otros)' });
-  const sin = lista.filter(g => !sobreDe(g.sobre_id)).reduce((a, g) => a + val(g), 0);
-  if (sin > 0) filas.push({ nombre: 'Sin sobre', icono: 'bandeja', v: sin, color: 'var(--s-sin)' });
-  filas.sort((a, b) => b.v - a.v);
-  const total = filas.reduce((a, f) => a + f.v, 0);
-
-  const meses = [];
-  for (let k = -5; k <= 0; k++) {
-    const cc = ciclo(d + k);
-    meses.push({
-      ini: cc.ini,
-      ing: enCicloI(cc).reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0),
-      gas: enCiclo(cc).reduce((a, g) => a + val(g), 0),
-    });
+const PERS = [['semana', 'Semanal'], ['quincena', 'Quincenal'], ['mes', 'Mensual']];
+const SECCIONES = [['rapida', 'Vista rápida'], ['sobres', 'Gastos por sobre'], ['ingas', 'Ingresos y gastos'], ['tend', 'Tendencia de gastos'], ['futuro', 'Balance futuro'], ['comercios', 'Dónde más gastaste']];
+function cfgEst() {
+  if (!S.estCfg) {
+    let g = {};
+    try { g = JSON.parse(localStorage.getItem('whiplash-analisis')) || {}; } catch { /* sin almacenamiento */ }
+    S.estCfg = Object.fromEntries(SECCIONES.map(([k]) => [k, g[k] !== false]));
   }
+  return S.estCfg;
+}
+
+// Un período: semana (lunes a domingo), quincena (1-15 y 16-fin) o el mes de la app
+function periodo(per, d = 0) {
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  if (per === 'semana') {
+    const ini = new Date(hoy); ini.setDate(hoy.getDate() - ((hoy.getDay() + 6) % 7) + 7 * d);
+    const fin = new Date(ini); fin.setDate(ini.getDate() + 7);
+    const ult = new Date(fin - 864e5);
+    return { ini, fin, nombre: `${ini.getDate()} ${MESES[ini.getMonth()]} – ${ult.getDate()} ${MESES[ult.getMonth()]}`, corto: `${ini.getDate()}/${ini.getMonth() + 1}` };
+  }
+  if (per === 'quincena') {
+    const idx = hoy.getFullYear() * 24 + hoy.getMonth() * 2 + (hoy.getDate() > 15 ? 1 : 0) + d;
+    const y = Math.floor(idx / 24), r = idx - y * 24, m = Math.floor(r / 2), seg = r % 2;
+    const ini = new Date(y, m, seg ? 16 : 1), fin = seg ? new Date(y, m + 1, 1) : new Date(y, m, 16);
+    return { ini, fin, nombre: `${seg ? 16 : 1}–${seg ? new Date(y, m + 1, 0).getDate() : 15} ${MESES_L[m]} ${y}`, corto: `${seg ? '2ª' : '1ª'} ${MESES[m]}` };
+  }
+  const c = ciclo(d);
+  return { ini: c.ini, fin: c.fin, nombre: nombreCiclo(c.ini), corto: MESES[c.ini.getMonth()] };
+}
+const dentro = (fecha, p) => { const f = new Date(fecha); return f >= p.ini && f < p.fin; };
+const gastosDe = (p) => S.gastos.filter(g => dentro(g.fecha, p));
+const ingresosDe = (p) => S.ingresos.filter(i => dentro(i.fecha, p));
+
+function datosEst(per, d) {
+  const p = periodo(per, d), mv = S.cfg.moneda_vista, lista = gastosDe(p);
+  const val = (g) => conv(g.monto, g.moneda, mv);
+  const suma = (l) => l.reduce((a, g) => a + val(g), 0);
+
+  // por sobre
+  const filas = []; let otros = [];
+  S.sobres.forEach((s, i) => {
+    const l = lista.filter(g => g.sobre_id === s.id);
+    if (!l.length) return;
+    const color = colorDeSobre(i);
+    if (color) filas.push({ nombre: s.nombre, icono: s.icono, v: suma(l), color, lista: l }); else otros = otros.concat(l);
+  });
+  if (otros.length) filas.push({ nombre: 'Otros sobres', icono: 'lista', v: suma(otros), color: 'var(--s-otros)', lista: otros });
+  const sin = lista.filter(g => !sobreDe(g.sobre_id));
+  if (sin.length) filas.push({ nombre: 'Sin sobre', icono: 'bandeja', v: suma(sin), color: 'var(--s-sin)', lista: sin });
+  filas.sort((a, b) => b.v - a.v);
+  const total = suma(lista);
+
+  // series por período
+  const serie = (n) => Array.from({ length: n }, (_, k) => {
+    const q = periodo(per, d - (n - 1) + k);
+    return { p: q, ing: ingresosDe(q).reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0), gas: suma(gastosDe(q)) };
+  });
+
+  // vista rápida
+  const hoy = new Date();
+  const diasTotal = Math.round((p.fin - p.ini) / 864e5);
+  const dias = dentro(hoy, p) ? Math.max(1, Math.floor((hoy - p.ini) / 864e5) + 1) : diasTotal;
+  const porDia = Array.from({ length: 7 }, () => ({ v: 0, lista: [] }));
+  for (const g of lista) { const x = porDia[new Date(g.fecha).getDay()]; x.v += val(g); x.lista.push(g); }
+  const iTop = porDia.reduce((m, x, i) => (x.v > porDia[m].v ? i : m), 0);
+  const anterior = suma(gastosDe(periodo(per, d - 1)));
+
+  // comercios
   const porComercio = new Map();
   for (const g of lista) {
     if (!g.comercio || g.fuente === 'ahorro') continue;
-    const k = normalizarComercio(g.comercio);
-    const e = porComercio.get(k) || { nombre: g.comercio, v: 0, n: 0 };
-    e.v += val(g); e.n++; porComercio.set(k, e);
+    const k = normalizarComercio(g.comercio.replace(/\s*\(cuota \d+\/\d+\)$/, ''));
+    const e = porComercio.get(k) || { nombre: g.comercio.replace(/\s*\(cuota \d+\/\d+\)$/, ''), v: 0, lista: [] };
+    e.v += val(g); e.lista.push(g); porComercio.set(k, e);
   }
   const comercios = [...porComercio.values()].sort((a, b) => b.v - a.v).slice(0, 5);
-  return { c, mv, filas, total, meses, comercios };
+
+  // balance futuro: ritmo neto de los últimos 90 días, proyectado desde lo disponible hoy
+  const hace90 = { ini: new Date(Date.now() - 90 * 864e5), fin: new Date(Date.now() + 1) };
+  const g90 = gastosDe(hace90), i90 = ingresosDe(hace90);
+  const primero = [...g90, ...i90].reduce((m, x) => Math.min(m, new Date(x.fecha).getTime()), Date.now());
+  const diasHist = Math.max(7, Math.round((Date.now() - primero) / 864e5) || 1);
+  const netoDia = (i90.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0) - suma(g90)) / diasHist;
+  const base = balance().disp;
+  const futuro = [0, 30, 60, 90].map(n => ({ n, v: base + netoDia * n }));
+
+  return {
+    p, mv, lista, filas, total, comercios, futuro, netoDia, diasHist,
+    barras: serie(6), tendencia: serie(per === 'mes' ? 12 : 10),
+    rapida: { dias, diasTotal, promedio: total / dias, proyeccion: total / dias * diasTotal, top: filas[0] || null,
+      diaTop: porDia[iTop].v > 0 ? { nombre: DIAS[iTop], ...porDia[iTop] } : null, anterior,
+      cambio: anterior > 0 ? (total - anterior) / anterior : null },
+  };
+}
+
+// ---------- gráficos ----------
+function dona(filas, total, mv) {
+  const r = 78, C = 2 * Math.PI * r; let ac = 0;
+  const segs = filas.map((f, i) => {
+    const largo = f.v / total * C, hueco = filas.length > 1 ? 3 : 0;
+    const s = `<circle class="seg" cx="110" cy="110" r="${r}" fill="none" stroke="${f.color}" stroke-width="30"
+      stroke-dasharray="${Math.max(1, largo - hueco).toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-ac).toFixed(2)}" data-accion="est-sobre" data-k="${i}"><title>${esc(f.nombre)}: ${fmt(f.v, mv)}</title></circle>`;
+    ac += largo; return s;
+  }).join('');
+  return `<div class="dona"><svg viewBox="0 0 220 220" aria-hidden="true"><g transform="rotate(-90 110 110)">${segs}</g></svg>
+    <div class="dona-centro"><b>${fmt(total, mv)}</b><span>gastado</span></div></div>`;
+}
+
+const corto = (n) => { const a = Math.abs(n); return (n < 0 ? '−' : '') + (a >= 1e6 ? (a / 1e6).toFixed(1).replace('.0', '') + 'M' : a >= 1e3 ? Math.round(a / 1e3) + 'K' : Math.round(a)); };
+
+// Línea con puntos tocables. pts: [{v, etiqueta}], sel: índice elegido
+function linea(pts, { color, accion, sel = -1, area = false, cada = 1, alto = 170 }) {
+  const W = 320, H = alto, pl = 36, pr = 12, pt = 14, pb = 26;
+  const vs = pts.map(x => x.v), max = Math.max(...vs, 0), min = Math.min(...vs, 0), rango = max - min || 1;
+  const X = (i) => pl + (pts.length === 1 ? 0 : i * (W - pl - pr) / (pts.length - 1));
+  const Y = (v) => pt + (max - v) / rango * (H - pt - pb);
+  const camino = pts.map((x, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(x.v).toFixed(1)}`).join(' ');
+  return `<svg class="linea-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico de línea">
+    ${[max, (max + min) / 2, min].map(v => `<line x1="${pl}" x2="${W - pr}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" class="rejilla"/><text x="${pl - 6}" y="${(Y(v) + 4).toFixed(1)}" class="eje" text-anchor="end">${corto(v)}</text>`).join('')}
+    ${area ? `<path d="${camino} L${X(pts.length - 1).toFixed(1)} ${Y(0).toFixed(1)} L${X(0).toFixed(1)} ${Y(0).toFixed(1)} Z" fill="${color}" opacity=".12"/>` : ''}
+    <path d="${camino}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    ${pts.map((x, i) => `${i % cada === 0 || i === pts.length - 1 ? `<text x="${X(i).toFixed(1)}" y="${H - 6}" class="eje" text-anchor="middle">${esc(x.etiqueta)}</text>` : ''}
+      <circle cx="${X(i).toFixed(1)}" cy="${Y(x.v).toFixed(1)}" r="${i === sel ? 6 : 4}" fill="${color}" stroke="var(--carta)" stroke-width="2"/>
+      ${accion ? `<circle cx="${X(i).toFixed(1)}" cy="${Y(x.v).toFixed(1)}" r="16" fill="transparent" data-accion="${accion}" data-k="${i}"><title>${esc(x.etiqueta)}: ${corto(x.v)}</title></circle>` : ''}`).join('')}
+  </svg>`;
 }
 
 function detalleMes(m, mv) {
   const neto = m.ing - m.gas;
-  return `<b style="text-transform:capitalize">${nombreCiclo(m.ini)}</b>
+  return `<b style="text-transform:capitalize">${m.p.nombre}</b>
     <span><i class="punto" style="background:var(--s-ing)"></i>Ingresos ${fmt(m.ing, mv)}</span>
     <span><i class="punto" style="background:var(--s-gas)"></i>Gastos ${fmt(m.gas, mv)}</span>
     <span class="neto">${neto >= 0 ? 'Quedó' : 'Faltó'} ${fmt(Math.abs(neto), mv)}</span>`;
 }
 
 function vistaEst() {
-  const d = S.est.d, e = datosEst(d), mv = e.mv;
-  const max = Math.max(1, ...e.meses.flatMap(m => [m.ing, m.gas]));
+  const { per, d } = S.est, e = datosEst(per, d), mv = e.mv, r = e.rapida, ver = cfgEst();
+  const max = Math.max(1, ...e.barras.flatMap(m => [m.ing, m.gas]));
   const sel = Math.min(5, Math.max(0, S.est.sel ?? 5));
-  return `${top('Análisis', { derecha: `<button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>` })}
+  const selT = Math.min(e.tendencia.length - 1, Math.max(0, S.est.selT ?? e.tendencia.length - 1));
+  const fin = e.futuro[3].v;
+  const tile = (k, icono, cls, etq, valor) => `<button class="tile-est" data-accion="est-tile" data-k="${k}">
+    <span class="tile ${cls}">${ico(icono)}</span>${ico('derecha', 'fin')}<small>${etq}</small><b>${valor}</b></button>`;
+  const cambio = r.cambio == null ? 'Sin datos antes' : `${r.cambio >= 0 ? '+' : '−'}${Math.round(Math.abs(r.cambio) * 100)}%`;
+
+  return `${top('Análisis', { derecha: `<button class="redondo" data-accion="est-personalizar" aria-label="Personalizar secciones">${ico('ajustes')}</button>` })}
+  <div class="segmento desliza" style="--n:3;--i:${PERS.findIndex(x => x[0] === per)};margin-bottom:10px" role="tablist"><span class="pill"></span>
+    ${PERS.map(([k, t]) => `<button class="${per === k ? 'activo' : ''}" data-accion="est-per" data-valor="${k}" role="tab" aria-selected="${per === k}">${t}</button>`).join('')}</div>
   <div class="nav-per">
-    <button class="ic-btn" data-accion="est-mover" data-d="-1" aria-label="Mes anterior">${ico('izquierda')}</button>
-    <b>${nombreCiclo(e.c.ini)}</b>
-    <button class="ic-btn" data-accion="est-mover" data-d="1" aria-label="Mes siguiente" ${d >= 0 ? 'disabled' : ''}>${ico('derecha')}</button>
+    <button class="ic-btn" data-accion="est-mover" data-d="-1" aria-label="Período anterior">${ico('izquierda')}</button>
+    <b>${e.p.nombre}</b>
+    <button class="ic-btn" data-accion="est-mover" data-d="1" aria-label="Período siguiente" ${d >= 0 ? 'disabled' : ''}>${ico('derecha')}</button>
   </div>
 
-  <h3 class="h-est">Gastos por sobre</h3>
+  ${ver.rapida ? `<h3 class="h-est">Vista rápida</h3>
+  <div class="tiles-est">
+    ${tile('promedio', 'moneda', 'azul', 'Promedio de gasto diario', fmt(r.promedio, mv))}
+    ${tile('top', r.top ? r.top.icono : 'carrito', 'ing', 'Sobre con más gasto', r.top ? esc(r.top.nombre) : '—')}
+    ${tile('dia', 'calendario', 'morado', 'Día que más gastás', r.diaTop ? r.diaTop.nombre.replace(/^./, c => c.toUpperCase()) : '—')}
+    ${tile('anterior', r.cambio != null && r.cambio < 0 ? 'baja' : 'sube', 'naranja', 'Contra el período anterior', cambio)}
+  </div>` : ''}
+
+  ${ver.sobres ? `<h3 class="h-est">Gastos por sobre</h3>
   ${e.filas.length ? `<section class="tarjeta-est">
-    <div class="est-total"><small>Total gastado</small><b>${fmt(e.total, mv)}</b></div>
-    <div class="tira" role="img" aria-label="Reparto del gasto por sobre">${e.filas.map(f => `<span style="flex:${(f.v / e.total).toFixed(4)};background:${f.color}" title="${esc(f.nombre)}: ${fmt(f.v, mv)}"></span>`).join('')}</div>
+    ${dona(e.filas, e.total, mv)}
     <div class="est-lista">
-      ${e.filas.map(f => `<div class="est-fila">
+      ${e.filas.map((f, i) => `<button class="est-fila" data-accion="est-sobre" data-k="${i}">
         <i class="punto" style="background:${f.color}"></i>
         <span class="n">${esc(f.nombre)}</span>
         <span class="p">${Math.round(f.v / e.total * 100)}%</span>
-        <span class="v">${fmt(f.v, mv)}</span>
-      </div>`).join('')}
+        <span class="v">${fmt(f.v, mv)}</span>${ico('derecha', 'fin')}
+      </button>`).join('')}
     </div></section>`
-    : `<div class="vacio">${ico('barras')}<div>No hay gastos en este período.</div></div>`}
+    : `<div class="vacio">${ico('barras')}<div>No hay gastos en este período.</div></div>`}` : ''}
 
-  <h3 class="h-est">Ingresos y gastos</h3>
+  ${ver.ingas ? `<h3 class="h-est">Ingresos y gastos</h3>
   <section class="tarjeta-est">
     <div class="leyenda"><span><i class="punto" style="background:var(--s-ing)"></i>Ingresos</span><span><i class="punto" style="background:var(--s-gas)"></i>Gastos</span></div>
-    <div class="grupos" role="group" aria-label="Ingresos y gastos de los últimos seis meses">
-      ${e.meses.map((m, k) => `<button class="grupo-mes ${k === sel ? 'sel' : ''}" data-accion="est-mes" data-k="${k}" aria-pressed="${k === sel}"
-          aria-label="${nombreCiclo(m.ini)}: ingresos ${fmt(m.ing, mv)}, gastos ${fmt(m.gas, mv)}">
+    <div class="grupos" role="group" aria-label="Ingresos y gastos de los últimos seis períodos">
+      ${e.barras.map((m, k) => `<button class="grupo-mes ${k === sel ? 'sel' : ''}" data-accion="est-mes" data-k="${k}" aria-pressed="${k === sel}"
+          aria-label="${m.p.nombre}: ingresos ${fmt(m.ing, mv)}, gastos ${fmt(m.gas, mv)}">
         <span class="barras2"><span class="b ing" style="height:${(m.ing / max * 100).toFixed(1)}%"></span><span class="b gas" style="height:${(m.gas / max * 100).toFixed(1)}%"></span></span>
-        <i>${MESES[m.ini.getMonth()]}</i></button>`).join('')}
+        <i>${m.p.corto}</i></button>`).join('')}
     </div>
-    <div class="detalle-mes" id="det-mes" aria-live="polite">${detalleMes(e.meses[sel], mv)}</div>
-  </section>
+    <div class="detalle-mes" aria-live="polite">${detalleMes(e.barras[sel], mv)}</div>
+  </section>` : ''}
 
-  ${e.comercios.length ? `<h3 class="h-est">Dónde más gastaste</h3>
-  <div class="grupo sin-icono">${e.comercios.map(x => `<div class="fila"><span class="txt"><b>${esc(x.nombre)}</b><small>${x.n} ${x.n === 1 ? 'compra' : 'compras'}</small></span><span class="lado">${fmt(x.v, mv)}</span></div>`).join('')}</div>` : ''}`;
+  ${ver.tend ? `<h3 class="h-est">Tendencia de gastos</h3>
+  <section class="tarjeta-est">
+    ${linea(e.tendencia.map(m => ({ v: m.gas, etiqueta: m.p.corto })), { color: 'var(--s-gas)', accion: 'est-punto', sel: selT, cada: per === 'mes' ? 2 : 3 })}
+    <div class="detalle-mes" aria-live="polite"><b style="text-transform:capitalize">${e.tendencia[selT].p.nombre}</b>
+      <span><i class="punto" style="background:var(--s-gas)"></i>Gastos ${fmt(e.tendencia[selT].gas, mv)}</span></div>
+  </section>` : ''}
+
+  ${ver.futuro ? `<h3 class="h-est">Balance futuro</h3>
+  <section class="tarjeta-est">
+    <small class="sub-est">Proyección a 90 días, al ritmo de tus últimos ${Math.min(90, e.diasHist)} días</small>
+    ${linea(e.futuro.map(x => ({ v: x.v, etiqueta: x.n ? x.n + 'd' : 'Hoy' })), { color: 'var(--s1)', area: true, alto: 150 })}
+    <div class="fila-futuro"><span>Proyectado en 90 días</span><b class="${fin < 0 ? 'mal' : 'bien'}">${fin < 0 ? '−' : ''}${fmt(Math.abs(fin), mv)}</b></div>
+    <p class="nota" style="margin:8px 0 0">${e.netoDia >= 0 ? 'Te quedan' : 'Se te van'} unos ${fmt(Math.abs(e.netoDia), mv)} por día. No toma en cuenta los presupuestos de los sobres.</p>
+  </section>` : ''}
+
+  ${ver.comercios && e.comercios.length ? `<h3 class="h-est">Dónde más gastaste</h3>
+  <div class="grupo sin-icono">${e.comercios.map((x, i) => `<button class="fila" data-accion="est-comercio" data-k="${i}"><span class="txt"><b>${esc(x.nombre)}</b><small>${x.lista.length} ${x.lista.length === 1 ? 'compra' : 'compras'}</small></span><span class="lado">${fmt(x.v, mv)}</span>${ico('derecha', 'fin')}</button>`).join('')}</div>` : ''}
+
+  <button class="enlace sin-raya centro" data-accion="est-personalizar">${ico('ajustes')} Elegir qué se muestra</button>`;
+}
+
+// ---------- detalle al tocar ----------
+function hojaLista(titulo, lista, p) {
+  const l = [...lista].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  abrirHoja(titulo, `<p class="nota" style="margin:-6px 0 12px">${l.length} ${l.length === 1 ? 'gasto' : 'gastos'} · ${p.nombre}</p>
+    <div class="pila chica">${l.map(g => filaMovU({ t: 'g', x: g, f: g.fecha })).join('')}</div>`);
+}
+function hojaTileEst(k) {
+  const e = datosEst(S.est.per, S.est.d), r = e.rapida, mv = e.mv;
+  const fila = (a, b, cls = '') => `<div class="fila-det"><span>${a}</span><b class="${cls}">${b}</b></div>`;
+  if (k === 'top') return r.top ? hojaLista(r.top.nombre, r.top.lista, e.p) : toast('Todavía no hay gastos');
+  if (k === 'dia') return r.diaTop ? hojaLista(r.diaTop.nombre.replace(/^./, c => c.toUpperCase()), r.diaTop.lista, e.p) : toast('Todavía no hay gastos');
+  if (k === 'promedio') {
+    return abrirHoja('Promedio de gasto diario', `
+      <div class="resultado azul"><small>Cómo se calcula</small><b>Total gastado ÷ días transcurridos</b></div>
+      ${fila('Total gastado', fmt(e.total, mv))}${fila('Días transcurridos', r.dias)}
+      <div class="fila-det total"><span>Promedio diario</span><b>${fmt(r.promedio, mv)}</b></div>
+      <div class="resultado"><small>Proyección del período</small>Si seguís a este ritmo, vas a gastar cerca de<br><b style="font-size:24px">${fmt(r.proyeccion, mv)}</b> en ${r.diasTotal} días</div>`);
+  }
+  const dif = e.total - r.anterior;
+  abrirHoja('Contra el período anterior', `
+    ${fila('Este período', fmt(e.total, mv))}${fila('Período anterior', fmt(r.anterior, mv))}
+    <div class="fila-det total"><span>Diferencia</span><b class="${dif > 0 ? 'mal' : 'bien'}">${dif > 0 ? '+' : dif < 0 ? '−' : ''}${fmt(Math.abs(dif), mv)}</b></div>
+    <div class="resultado">${r.cambio == null ? 'No hay gastos en el período anterior para comparar.'
+      : dif > 0 ? `Gastaste <b>${Math.round(r.cambio * 100)}% más</b> que el período anterior.`
+      : dif < 0 ? `Gastaste <b>${Math.round(-r.cambio * 100)}% menos</b> que el período anterior.` : 'Gastaste lo mismo que el período anterior.'}</div>
+    ${dentro(new Date(), e.p) ? '<p class="nota">Este período todavía no termina, así que la comparación es parcial.</p>' : ''}`);
+}
+function hojaPersonalizar() {
+  const ver = cfgEst();
+  abrirHoja('Qué se muestra', `<div class="campos">${SECCIONES.map(([k, n]) => `<label class="campo"><span style="color:var(--tinta)">${n}</span>
+    <span class="interruptor"><input type="checkbox" data-est-sec="${k}" ${ver[k] ? 'checked' : ''}><span></span></span></label>`).join('')}</div>
+    <p class="nota">Se guarda en este teléfono.</p>
+    <div class="acciones"><button type="button" class="btn primario" data-accion="cerrar">Listo</button></div>`);
 }
 
 function vistaSobres() {
@@ -1476,8 +1634,14 @@ async function accion(el) {
   switch (a) {
     case 'tab': S.tab = el.dataset.v; S.pila = []; render(true); scrollTo(0, 0); break;
     case 'panel': abrirPanel(); break;
-    case 'est-mover': S.est.d = Math.min(0, S.est.d + Number(el.dataset.d)); S.est.sel = 5; render(); break;
+    case 'est-per': S.est = { per: el.dataset.valor, d: 0, sel: 5 }; render(); break;
+    case 'est-mover': S.est = { per: S.est.per, d: Math.min(0, S.est.d + Number(el.dataset.d)), sel: 5 }; render(); break;
     case 'est-mes': S.est.sel = Number(el.dataset.k); render(); break;
+    case 'est-punto': S.est.selT = Number(el.dataset.k); render(); break;
+    case 'est-tile': hojaTileEst(el.dataset.k); break;
+    case 'est-sobre': { const e = datosEst(S.est.per, S.est.d), f = e.filas[Number(el.dataset.k)]; if (f) hojaLista(f.nombre, f.lista, e.p); break; }
+    case 'est-comercio': { const e = datosEst(S.est.per, S.est.d), c = e.comercios[Number(el.dataset.k)]; if (c) hojaLista(c.nombre, c.lista, e.p); break; }
+    case 'est-personalizar': hojaPersonalizar(); break;
     case 'cerrar-panel': cerrarPanel(); break;
     case 'nuevo-ingreso': hojaIngreso(); break;
     case 'editar-ingreso': hojaIngreso(S.ingresos.find(i => i.id === id)); break;
@@ -1566,6 +1730,11 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('change', async (e) => {
   const t = e.target;
+  if (t.dataset.estSec) {
+    cfgEst()[t.dataset.estSec] = t.checked;
+    try { localStorage.setItem('whiplash-analisis', JSON.stringify(S.estCfg)); } catch { /* sin almacenamiento */ }
+    render(); return;
+  }
   if (t.dataset.desc) { if (t.value) { S.desc[t.dataset.desc] = t.value; S.desc.preset = ''; render(); } return; }
   if (t.hasAttribute('data-desc-preset')) { S.desc = { ...rangoPreset(t.value), preset: t.value }; render(); return; }
   try {
