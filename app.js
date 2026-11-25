@@ -1281,7 +1281,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 12`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 13`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1554,7 +1554,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 12</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 13</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1600,6 +1600,7 @@ function abrirHoja(titulo, cuerpo) {
       <div class="panel-top"><h3>${esc(titulo)}</h3><button type="button" class="redondo" data-accion="cerrar" aria-label="Cerrar">${ico('cerrar')}</button></div>
       ${cuerpo}</form>`;
   h.hidden = false;
+  document.documentElement.classList.add('hoja-abierta');   // la página de atrás no se mueve mientras la hoja está abierta
   requestAnimationFrame(() => requestAnimationFrame(() => h.classList.add('abierta')));
   const f = h.querySelector('form');
   // Guardar espera al servidor: mientras tanto el botón lo indica y un segundo toque no guarda dos veces
@@ -1633,6 +1634,7 @@ function abrirHoja(titulo, cuerpo) {
 }
 function cerrarHoja() {
   const h = $('#hoja'); h.classList.remove('abierta');
+  document.documentElement.classList.remove('hoja-abierta');
   setTimeout(() => { if (!h.classList.contains('abierta')) { h.hidden = true; h.innerHTML = ''; } }, 250);
 }
 
@@ -2527,16 +2529,26 @@ const deslizaSolo = (el) => {   // carruseles y filas que ya se deslizan de lado
 document.addEventListener('touchstart', (e) => {
   if (e.touches.length !== 1) { toque = null; return; }
   const p = e.touches[0], el = e.target;
-  toque = { x: p.clientX, y: p.clientY, t: Date.now(), cajon: !!(el.closest && el.closest('.cajon')), borde: p.clientX < 30, libre: !deslizaSolo(el) };
+  const hoja = el.closest ? el.closest('#hoja .panel') : null;
+  toque = { x: p.clientX, y: p.clientY, t: Date.now(), cajon: !!(el.closest && el.closest('.cajon')), borde: p.clientX < 30, libre: !deslizaSolo(el),
+    hoja, hojaArriba: !!hoja && hoja.scrollTop <= 0, campo: /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) };
 }, { passive: true });
 document.addEventListener('touchend', (e) => {
   const q = toque; toque = null;
   if (!q) return;
   const p = e.changedTouches[0], dx = p.clientX - q.x, dy = Math.abs(p.clientY - q.y);
   if (q.cajon) { if (dx < -50) cerrarPanel(); return; }
+  // la hoja se cierra deslizándola hacia abajo desde arriba
+  if (q.hoja) { if (q.hojaArriba && !q.campo && p.clientY - q.y > 90 && Math.abs(dx) < 80) cerrarHoja(); return; }
   if (!$('#hoja').hidden || !$('#panel').hidden || !S.pila.length) return;
   if (Date.now() - q.t > 700 || dy > Math.abs(dx) * 0.6) return;   // tiene que ser un gesto rápido y horizontal
   // desde el borde izquierdo, o un deslizón largo hacia la derecha en cualquier parte
   if (dx > (q.borde ? 60 : 110) && (q.borde || q.libre)) { S.pila.pop(); render(true); }
 }, { passive: true });
+// Con la hoja abierta y ya arriba del todo, jalar hacia abajo no debe refrescar la página en Safari
+document.addEventListener('touchmove', (e) => {
+  if (!toque || !toque.hoja || e.touches.length !== 1) return;
+  const dy = e.touches[0].clientY - toque.y, dx = Math.abs(e.touches[0].clientX - toque.x);
+  if (toque.hoja.scrollTop <= 0 && dy > 0 && dy > dx && e.cancelable) e.preventDefault();   // los chips que se deslizan de lado siguen funcionando
+}, { passive: false });
 iniciar();
