@@ -376,15 +376,15 @@ button { cursor: pointer; background: none; border: 0; padding: 0; text-align: i
 }
 .tb-top { display: flex; align-items: center; justify-content: space-between; font-size: 16px; color: rgba(255,255,255,.82); }
 .chip-moneda.oscuro { background: rgba(255,255,255,.14); color: #fff; font-size: 13px; padding: 5px 8px 5px 11px; }
-.tb-monto { font-size: 42px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; margin: 6px 0 16px; overflow-wrap: anywhere; }
+.tb-monto { font-size: clamp(27px, 9.2vw, 42px); font-weight: 700; letter-spacing: -.02em; line-height: 1.1; margin: 6px 0 16px; overflow-wrap: anywhere; }
 .tb-pct { display: flex; justify-content: space-between; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.72); margin-bottom: 6px; }
 .tb-barra { height: 9px; border-radius: 99px; background: rgba(255,255,255,.18); overflow: hidden; }
 .tb-barra span { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #7ee8a3, #7fe3e0); transition: width .4s; }
 .tb-dos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
-.tb-dos div { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; padding: 12px 14px; min-width: 0; }
+.tb-dos div { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; padding: 12px 12px; min-width: 0; }
 .tb-dos small { display: flex; align-items: center; gap: 6px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.75); }
 .tb-dos small .i { width: 16px; height: 16px; }
-.tb-dos b { display: block; font-size: 19px; font-weight: 700; margin-top: 4px; overflow-wrap: anywhere; }
+.tb-dos b { display: block; font-size: clamp(13px, 4.3vw, 19px); font-weight: 700; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .tarjeta-seguro { display: block; width: 100%; text-align: left; background: var(--carta); border-radius: 22px; padding: 18px 20px; }
 .tarjeta-seguro.deficit { background: color-mix(in srgb, var(--mal) 9%, var(--fondo)); border: 1px solid color-mix(in srgb, var(--mal) 30%, transparent); }

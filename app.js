@@ -5,11 +5,10 @@ import { leerAviso, normalizarComercio } from './parser.js';
 // ================= utilidades =================
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const miles = (n) => Math.round(Math.abs(n)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+// Montos a la vista: coma para miles, punto para decimales y siempre dos decimales (₡785,000.00)
 function fmt(n, moneda = 'CRC') {
   const s = n < 0 ? '−' : '';
-  if (moneda === 'USD') return s + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return s + '₡' + miles(n);
+  return s + (moneda === 'USD' ? '$' : '₡') + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 const hoyLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -24,34 +23,33 @@ const METODOS_RAPIDOS = [['Cuenta bancaria', 'cuenta'], ['SINPE Móvil', 'sinpe'
 const tipoMetodo = (m) => TIPOS_METODO[m.tipo] || TIPOS_METODO.otro;
 const ACENTOS = { verde: '#7ee8a3', azul: '#8cc8ff', morado: '#c4a8ff', naranja: '#ffc078' };
 const NOMBRE_APP = 'Whiplash';
-// Montos en los campos: punto para miles y coma para decimales (2.500.000,00)
+// Montos en los campos: coma para miles y punto para decimales (2,500,000.00)
 const SEL_MONTO = 'input[name="monto"], input[name="presupuesto"], input[name="meta"], input[name="saldo"], input[data-cfg="tipo_cambio"]';
 const leerMontoCampo = (v) => {
-  const n = Number(String(v || '').replace(/[^\d,]/g, '').replace(',', '.'));
+  const n = Number(String(v || '').replace(/[^\d.]/g, ''));
   return n > 0 ? Math.round(n * 100) / 100 : 0;
 };
-const puntosMiles = (ent) => ent.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+const comasMiles = (ent) => ent.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 // número guardado -> texto del campo
 function numATexto(n) {
   n = Math.round(Number(n) * 100) / 100;
   if (!(n > 0)) return '';
   const [ent, dec] = n.toFixed(2).split('.');
-  return puntosMiles(ent) + (dec === '00' ? '' : ',' + dec);
+  return comasMiles(ent) + (dec === '00' ? '' : '.' + dec);
 }
 // lo que se va escribiendo -> mismo texto con separadores
 function formatoVivo(valor, tecla) {
   let v = String(valor);
-  // un punto recién tecleado es el separador decimal; los demás puntos son de miles
-  // (también al pegar un número como 2500000.5)
-  const pegado = tecla && tecla.length > 1 && /^\d+\.\d{1,2}$/.test(v.trim());
-  if ((tecla === '.' || v.endsWith('.') || pegado) && !v.includes(',')) { const i = v.lastIndexOf('.'); v = v.slice(0, i) + ',' + v.slice(i + 1); }
-  v = v.replace(/[^\d,]/g, '');
-  const i = v.indexOf(',');
-  if (i < 0) return puntosMiles(v);
-  const ent = v.slice(0, i), dec = v.slice(i + 1).replace(/,/g, '').slice(0, 2);
-  return (puntosMiles(ent) || '0') + ',' + dec;
+  // el teclado del iPhone puede traer coma en vez de punto: una coma recién tecleada es el separador decimal
+  if (tecla === ',' && !v.includes('.')) { const i = v.lastIndexOf(','); v = v.slice(0, i) + '.' + v.slice(i + 1); }
+  // y al pegar un número escrito como 2500000,5
+  else if (tecla === 'pegado' && /^\d+,\d{1,2}$/.test(v.trim())) v = v.trim().replace(',', '.');
+  v = v.replace(/[^\d.]/g, '');
+  const i = v.indexOf('.');
+  if (i < 0) return comasMiles(v);
+  const ent = v.slice(0, i), dec = v.slice(i + 1).replace(/\./g, '').slice(0, 2);
+  return (comasMiles(ent) || '0') + '.' + dec;
 }
-const decimalesFaltan = (v) => { const i = v.indexOf(','); return !v ? '' : i < 0 ? ',00' : '0'.repeat(Math.max(0, 2 - (v.length - i - 1))); };
 
 // ================= estado =================
 const S = {
@@ -1278,7 +1276,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 9`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 10`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1551,7 +1549,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 9</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 10</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -2398,7 +2396,7 @@ document.addEventListener('change', async (e) => {
 document.addEventListener('input', (e) => {
   const t = e.target;
   if (!t.matches || !t.matches(SEL_MONTO)) return;
-  const nuevo = formatoVivo(t.value, e.data);
+  const nuevo = formatoVivo(t.value, e.inputType === 'insertFromPaste' ? 'pegado' : e.data);
   if (nuevo !== t.value) { t.value = nuevo; try { t.setSelectionRange(nuevo.length, nuevo.length); } catch { /* tipo sin selección */ } }
 }, true);
 document.addEventListener('focusout', (e) => {
