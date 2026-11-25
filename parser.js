@@ -100,16 +100,31 @@ export function leerAviso({ texto, monto, comercio, tarjeta } = {}) {
   if (/rechazad|declinad|no aprobad|denegad/i.test(t)) {
     return { ok: false, motivo: 'transacción rechazada' };
   }
+  const referencia = (t.match(/referencia\s*:?\s*(\d{8,30})/i) || [])[1] || null;
+
+  // Plata que entra: "Ha recibido 17,550.00 Colones de NOMBRE por SINPE Movil, ..."
+  if (/\bha recibido\b|\brecibi[oó] (?:un |una )?(?:sinpe|transferencia|dep[oó]sito)|dep[oó]sito recibido/i.test(t)) {
+    const mi = leerMonto(t);
+    if (!mi) return { ok: false, motivo: 'no encontré el monto' };
+    const de = t.match(/\bde\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{2,70}?)\s+por\s+SINPE/i);
+    return { ok: true, tipo: 'ingreso', monto: mi.monto, moneda: mi.moneda, origen: de ? limpiarComercio(de[1]) : null, referencia };
+  }
+
   if (t && /devoluci[oó]n|reverso|reversi[oó]n|cr[eé]dito a su (?:cuenta|tarjeta)|pago recibido/i.test(t)) {
     return { ok: false, motivo: 'no es una compra (devolución, reverso o pago)' };
   }
   const m = monto != null && monto !== '' ? leerMonto(String(monto)) : leerMonto(t);
   if (!m) return { ok: false, motivo: 'no encontré el monto' };
+  // Plata que sale por SINPE: "la transferencia SINPE con referencia ... ha sido procesada"
+  const sinpe = /\bsinpe\b/i.test(t);
   return {
     ok: true,
+    tipo: 'gasto',
     monto: m.monto,
     moneda: m.moneda,
-    comercio: limpiarComercio(comercio) || leerComercio(t),
+    comercio: limpiarComercio(comercio) || leerComercio(t) || (sinpe ? 'SINPE enviado' : null),
     tarjeta: (tarjeta && (String(tarjeta).match(/\d{4}(?!.*\d{4})/) || [String(tarjeta)])[0]) || leerTarjeta(t),
+    sinpe,
+    referencia,
   };
 }

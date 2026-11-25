@@ -8,7 +8,7 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) 
 
 // ---------- Demo (localStorage) ----------
 const CLAVE = 'sobres-demo-v2';
-export const TABLAS = ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros'];
+export const TABLAS = ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos'];
 function leerDemo() {
   try { return JSON.parse(localStorage.getItem(CLAVE)) || null; } catch { return null; }
 }
@@ -65,7 +65,7 @@ function backendSupabase() {
     async salir() { await sb.auth.signOut(); },
     async listar(tabla) {
       let q = sb.from(tabla).select('*');
-      if (tabla === 'gastos') {
+      if (tabla === 'gastos' || tabla === 'ingresos') {
         const desde = new Date(); desde.setMonth(desde.getMonth() - 14);
         q = q.gte('fecha', desde.toISOString()).order('fecha', { ascending: false });
       }

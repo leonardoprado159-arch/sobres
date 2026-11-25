@@ -56,21 +56,24 @@ const decimalesFaltan = (v) => { const i = v.indexOf(','); return !v ? '' : i < 
 // ================= estado =================
 const S = {
   cfg: null, sobres: [], metodos: [], gastos: [], reglas: [], subs: [], ahorros: [], usuario: null,
-  tab: 'gastos', pila: [],
+  ingresos: [], fijos: [], mov: { filtro: 'todo', q: '' },
+  tab: 'inicio', pila: [],
 };
 const vistaActual = () => S.pila[S.pila.length - 1] || { v: S.tab };
 
 async function cargarTodo() {
-  const [config, sobres, metodos, gastos, reglas, subs, ahorros] = await Promise.all(
-    ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros'].map(t => api.listar(t)));
+  const [config, sobres, metodos, gastos, reglas, subs, ahorros, ingresos, fijos] = await Promise.all(
+    ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos'].map(t => api.listar(t)));
   S.cfg = config[0];
   const orden = (a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.creado).localeCompare(String(b.creado));
   S.sobres = sobres.filter(s => !s.archivado).sort(orden);
   S.metodos = metodos.sort(orden);
   S.gastos = gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
   S.reglas = reglas; S.subs = subs; S.ahorros = ahorros.sort(orden);
+  S.ingresos = ingresos.sort((a, b) => b.fecha.localeCompare(a.fecha)); S.fijos = fijos;
   aplicarTema();
   await cobrarSuscripciones();
+  await registrarFijos();
 }
 
 function aplicarTema() {
@@ -183,13 +186,296 @@ function listaPorDia(gastos, conSobre = true) {
 }
 
 // ================= vistas: pestañas =================
-function vistaGastos() {
+// ================= finanzas: ingresos, balance y movimientos =================
+const enCicloI = (c) => S.ingresos.filter(i => { const f = new Date(i.fecha); return f >= c.ini && f < c.fin; });
+const conSigno = (n, moneda, s) => (Math.abs(n) < 0.005 ? '' : s) + fmt(Math.abs(n), moneda);
+
+// Balance del ciclo: lo que entró menos lo que salió. "Seguro para gastar" le resta lo que
+// todavía está reservado en sobres con presupuesto.
+function balance(c = ciclo()) {
+  const mv = S.cfg.moneda_vista, gastos = enCiclo(c), ingresos = enCicloI(c);
+  const ing = ingresos.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0);
+  const gas = gastos.reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
+  const reservado = S.sobres.filter(s => s.presupuesto > 0)
+    .reduce((a, s) => a + conv(Math.max(0, s.presupuesto - gastadoSobre(s, gastos)), s.moneda, mv), 0);
+  const disp = ing - gas;
+  return { mv, ing, gas, disp, reservado, seguro: disp - reservado, dias: Math.max(1, diasParaCierre()), hayIngresos: ingresos.length > 0 };
+}
+
+// Ingresos fijos (salario): fechas de pago de este mes y del anterior que ya pasaron
+function fechasFijo(f, hasta = new Date()) {
+  const out = [];
+  for (const dm of [-1, 0]) {
+    const y = hasta.getFullYear(), m = hasta.getMonth() + dm, ult = new Date(y, m + 1, 0).getDate();
+    for (const d of (f.frecuencia === 'quincenal' ? [f.dia1, f.dia2 || 30] : [f.dia1])) out.push(new Date(y, m, Math.min(d, ult), 8));
+  }
+  const desde = new Date(f.creado); desde.setHours(0, 0, 0, 0);
+  return out.filter(d => d <= hasta && d >= desde);
+}
+async function registrarFijos() {
+  for (const f of S.fijos.filter(x => x.activo)) {
+    const marca = 'fijo:' + f.id;
+    for (const d of fechasFijo(f)) {
+      if (S.ingresos.some(i => i.nota === marca && new Date(i.fecha).toDateString() === d.toDateString())) continue;
+      S.ingresos.push(await api.insertar('ingresos', { monto: f.monto, moneda: f.moneda, origen: f.nombre, fuente: 'fijo', fecha: d.toISOString(), nota: marca }));
+    }
+  }
+  S.ingresos.sort((a, b) => b.fecha.localeCompare(a.fecha));
+}
+function proximoFijo(f) {
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const dias = f.frecuencia === 'quincenal' ? [f.dia1, f.dia2 || 30] : [f.dia1];
+  const cand = [];
+  for (const dm of [0, 1]) {
+    const y = hoy.getFullYear(), m = hoy.getMonth() + dm, ult = new Date(y, m + 1, 0).getDate();
+    for (const d of dias) cand.push(new Date(y, m, Math.min(d, ult)));
+  }
+  return cand.filter(d => d >= hoy).sort((a, b) => a - b)[0];
+}
+
+// Gastos e ingresos en una sola lista
+function movimientos({ filtro = 'todo', q = '', c = null } = {}) {
+  let l = [];
+  if (filtro !== 'ingresos') l = l.concat(S.gastos.map(g => ({ t: 'g', x: g, f: g.fecha })));
+  if (filtro !== 'gastos') l = l.concat(S.ingresos.map(i => ({ t: 'i', x: i, f: i.fecha })));
+  if (c) l = l.filter(m => { const f = new Date(m.f); return f >= c.ini && f < c.fin; });
+  const k = q.trim().toLowerCase();
+  if (k) l = l.filter(m => [m.x.comercio, m.x.origen, /^(sub|ahorro|fijo):/.test(m.x.nota || '') ? '' : m.x.nota, sobreDe(m.x.sobre_id)?.nombre, metodoDe(m.x.metodo_id)?.nombre]
+    .some(v => v && String(v).toLowerCase().includes(k)));
+  return l.sort((a, b) => b.f.localeCompare(a.f));
+}
+function filaMovU(m) {
+  const x = m.x;
+  if (m.t === 'i') {
+    const sub = x.fuente === 'fijo' ? 'Ingreso fijo' : x.fuente === 'manual' ? 'Ingreso' : 'SINPE recibido';
+    return `<button class="movu" data-accion="editar-ingreso" data-id="${x.id}">
+      <span class="tile ing">${ico('monedas')}</span>
+      <span class="txt"><b>${esc(x.origen || 'Ingreso')}</b><small>${sub}</small></span>
+      <span class="monto bien">+${fmt(x.monto, x.moneda)}</span></button>`;
+  }
+  const s = sobreDe(x.sobre_id);
+  return `<button class="movu" data-accion="editar-gasto" data-id="${x.id}">
+    <span class="tile">${ico(s ? s.icono : 'bandeja')}</span>
+    <span class="txt"><b>${esc(x.comercio || 'Gasto')}</b><small>${s ? esc(s.nombre) : '<em>Sin sobre</em>'}</small></span>
+    <span class="monto">−${fmt(x.monto, x.moneda)}</span></button>`;
+}
+function listaMovs(l, vacio = 'Todavía no hay movimientos.') {
+  if (!l.length) return `<div class="vacio">${ico('recibo')}<div>${vacio}</div></div>`;
+  const mv = S.cfg.moneda_vista, grupos = new Map();
+  for (const m of l) {
+    const f = new Date(m.f), k = f.toDateString();
+    if (!grupos.has(k)) grupos.set(k, { f, items: [], neto: 0 });
+    const g = grupos.get(k); g.items.push(m); g.neto += (m.t === 'i' ? 1 : -1) * conv(m.x.monto, m.x.moneda, mv);
+  }
+  const hoy = new Date().toDateString(), ayer = new Date(Date.now() - 864e5).toDateString();
+  return [...grupos.entries()].map(([k, g]) => {
+    const t = k === hoy ? 'Hoy' : k === ayer ? 'Ayer' : `${DIAS[g.f.getDay()]} ${g.f.getDate()} ${MESES[g.f.getMonth()]}`;
+    return `<div class="dia-mov"><span>${t}</span><span class="${g.neto > 0 ? 'bien' : ''}">${conSigno(g.neto, mv, g.neto > 0 ? '+' : '−')}</span></div>
+      <div class="pila chica">${g.items.map(filaMovU).join('')}</div>`;
+  }).join('');
+}
+
+function vistaInicio() {
+  const c = ciclo(), b = balance(c), mv = b.mv;
+  const pct = b.ing > 0 ? Math.max(0, Math.min(1, b.disp / b.ing)) : 0;
+  const pendientes = S.gastos.filter(g => !g.sobre_id && new Date(g.fecha) >= c.ini).length;
+  const prox = S.subs.filter(s => s.activa).map(s => ({ s, d: Math.round((proximoCobro(s) - new Date().setHours(0, 0, 0, 0)) / 864e5) })).filter(x => x.d <= 2);
+  let seguro;
+  if (!b.hayIngresos) {
+    seguro = `<button class="tarjeta-seguro vacia" data-accion="nuevo-ingreso">
+      <div class="ts-top"><span class="tile ing">${ico('monedas')}</span><b>Registrá tu ingreso</b>${ico('derecha', 'fin')}</div>
+      <p>Con tus ingresos del mes la app calcula cuánto podés gastar por día.</p></button>`;
+  } else if (b.seguro >= 0) {
+    seguro = `<section class="tarjeta-seguro">
+      <div class="ts-top"><span class="tile ing">${ico('efectivo')}</span><b>Seguro para gastar</b></div>
+      <div class="ts-monto bien">${fmt(b.seguro, mv)}</div>
+      <p>${fmt(b.seguro / b.dias, mv)} / día · ${b.dias} ${b.dias === 1 ? 'día restante' : 'días restantes'}${b.reservado > 0 ? `<br>${fmt(b.reservado, mv)} reservados en tus sobres` : ''}</p></section>`;
+  } else {
+    seguro = `<section class="tarjeta-seguro deficit">
+      <div class="ts-top"><span class="tile mal">${ico('info')}</span><b>Déficit del período</b></div>
+      <div class="ts-monto mal">−${fmt(Math.abs(b.seguro), mv)}</div>
+      <p>${b.disp < 0 ? 'Tus gastos superan tus ingresos.' : `Lo disponible no alcanza para cubrir los ${fmt(b.reservado, mv)} que faltan en tus sobres.`}</p></section>`;
+  }
+  return `
+  <header class="top inicio">
+    <button class="marca-btn" data-accion="panel" aria-label="Abrir menú"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b><small>${nombreCiclo(c.ini)}</small></span></button>
+    <button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>
+  </header>
+  <section class="tarjeta-balance">
+    <div class="tb-top"><span>Balance disponible</span><button class="chip-moneda oscuro" data-accion="cambiar-moneda" aria-label="Cambiar moneda">${mv} ${ico('abajo')}</button></div>
+    <div class="tb-monto">${conSigno(b.disp, mv, b.disp < 0 ? '−' : '') || fmt(0, mv)}</div>
+    <div class="tb-pct"><span>Disponible</span><span>${Math.round(pct * 100)}%</span></div>
+    <div class="tb-barra"><span style="width:${(pct * 100).toFixed(1)}%"></span></div>
+    <div class="tb-dos">
+      <div><small>${ico('sube')} Ingresos</small><b>${conSigno(b.ing, mv, '+') || fmt(0, mv)}</b></div>
+      <div><small>${ico('baja')} Gastos</small><b>${conSigno(b.gas, mv, '−') || fmt(0, mv)}</b></div>
+    </div>
+  </section>
+  ${seguro}
+  ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre" style="margin-top:12px">
+      ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin sobre' : 'gastos sin sobre'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
+  ${prox.map(({ s, d }) => `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'calendario', 44)}
+      <span class="nombre">${esc(s.nombre)}<small>Se cobra ${d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${d} días`}</small></span>
+      <span class="valor"><b>${fmt(s.monto, s.moneda)}</b></span></div>`).join('')}
+  <div class="cab-mov" style="margin-top:28px"><h3 class="h-mov">Movimientos</h3><button class="enlace sin-raya" data-accion="tab" data-v="movs">Ver todos</button></div>
+  ${listaMovs(movimientos({ c }).slice(0, 25))}`;
+}
+
+const FILTROS_MOV = [['todo', 'Todo'], ['gastos', 'Gastos'], ['ingresos', 'Ingresos']];
+function resMovs() {
+  const l = movimientos(S.mov), mv = S.cfg.moneda_vista;
+  const neto = l.reduce((a, m) => a + (m.t === 'i' ? 1 : -1) * conv(m.x.monto, m.x.moneda, mv), 0);
+  return `<div class="cab-res"><span><b>${l.length} ${l.length === 1 ? 'movimiento' : 'movimientos'}</b>
+      <small class="${neto >= 0 ? 'bien' : 'mal'}">${neto >= 0 ? '+' : '−'} ${fmt(Math.abs(neto), mv)}</small></span>
+    <span class="iconos"><button class="ic-btn" data-accion="ir" data-v="descargas" aria-label="Descargar datos">${ico('descargar')}</button>
+      <button class="ic-btn" data-accion="ir" data-v="historial" aria-label="Ver historial">${ico('historial')}</button></span></div>
+  ${listaMovs(l.slice(0, 200), 'Nada coincide con lo que buscás.')}`;
+}
+function vistaMovs() {
+  const f = S.mov;
+  return `${top('Movimientos', { derecha: `<button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>` })}
+  <label class="buscador">${ico('buscar')}<input type="search" data-buscar placeholder="Buscar comercio, sobre o nota" value="${esc(f.q)}" aria-label="Buscar movimientos" autocomplete="off"></label>
+  <div class="segmento desliza" id="seg-mov" style="--n:3;--i:${FILTROS_MOV.findIndex(x => x[0] === f.filtro)}" role="tablist"><span class="pill"></span>
+    ${FILTROS_MOV.map(([k, t]) => `<button class="${f.filtro === k ? 'activo' : ''}" data-accion="filtro-mov" data-valor="${k}" role="tab" aria-selected="${f.filtro === k}">${t}</button>`).join('')}</div>
+  <div id="res-movs">${resMovs()}</div>`;
+}
+
+// ---------- panel lateral (configuración) ----------
+function abrirPanel() {
+  const p = $('#panel');
+  const fila = (icono, txt, v) => `<button class="fila" data-accion="ir" data-v="${v}">${ico(icono)}<span class="txt"><b>${txt}</b></span></button>`;
+  const n = S.gastos.filter(g => !g.sobre_id).length;
+  p.innerHTML = `<div class="velo" data-accion="cerrar-panel"></div>
+  <aside class="cajon" role="dialog" aria-label="Menú">
+    <div class="cajon-cab"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b><small>${esc(modoDemo ? 'Modo demo' : S.usuario?.email || '')}</small></span></div>
+    <div class="cajon-lista">
+      ${fila('monedas', 'Ingresos fijos', 'fijos')}
+      ${fila('tarjeta', 'Métodos de pago', 'metodos')}
+      ${fila('calendario', 'Suscripciones', 'suscripciones')}
+      ${fila('bandeja', `Gastos sin sobre${n ? ` (${n})` : ''}`, 'sinsobre')}
+      ${fila('historial', 'Historial', 'historial')}
+      ${fila('descargar', 'Descargar datos', 'descargas')}
+    </div>
+    <div class="cajon-pie">
+      ${fila('magia', 'Trackear con Apple Pay', 'applepay')}
+      ${fila('mensaje', 'Avisos del banco', 'avisos')}
+      ${fila('ajustes', 'Configuración', 'ajustes')}
+    </div>
+  </aside>`;
+  p.hidden = false;
+  requestAnimationFrame(() => requestAnimationFrame(() => p.classList.add('abierta')));
+}
+function cerrarPanel() {
+  const p = $('#panel');
+  if (!p || p.hidden) return;
+  p.classList.remove('abierta');
+  setTimeout(() => { if (!p.classList.contains('abierta')) { p.hidden = true; p.innerHTML = ''; } }, 260);
+}
+
+// ---------- ingresos ----------
+const selectorTipo = (sel) => `<div class="alternar tipo" role="radiogroup" aria-label="Tipo de movimiento">
+  <label><input type="radio" name="tipoMov" value="gasto" ${sel === 'gasto' ? 'checked' : ''}><span>Gasto</span></label>
+  <label><input type="radio" name="tipoMov" value="ingreso" ${sel === 'ingreso' ? 'checked' : ''}><span>Ingreso</span></label></div>`;
+function enlazarTipo(f) {
+  f.querySelectorAll('input[name="tipoMov"]').forEach(r => r.addEventListener('change', () => { if (r.value === 'ingreso') hojaIngreso(); else hojaGasto(); }));
+}
+
+function hojaIngreso(i = null, pre = {}) {
+  const v0 = i || pre;
+  const fecha = new Date(i ? i.fecha : Date.now());
+  const local = new Date(fecha - fecha.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+  const esFijo = /^fijo:/.test(i?.nota || '');
+  const f = abrirHoja(i ? 'Editar ingreso' : 'Nuevo ingreso', `${i || pre.monto ? '' : selectorTipo('ingreso')}
+    <div class="monto-grande">
+      <div class="fila-monto"><span class="simbolo">${v0.moneda === 'USD' ? '$' : '₡'}</span>
+        <input name="monto" inputmode="decimal" placeholder="0" value="${v0.monto ?? ''}" autofocus aria-label="Monto"></div>
+      ${alternarMoneda('moneda', v0.moneda || 'CRC')}
+    </div>
+    <div class="campos">
+      <label class="campo"><span>De</span><input name="origen" value="${esc(v0.origen || '')}" placeholder="Salario, cliente, persona…" autocomplete="off"></label>
+      <label class="campo"><span>Fecha</span><input type="datetime-local" name="fecha" value="${local}"></label>
+      <label class="campo"><span>Nota</span><input name="nota" value="${esc(esFijo ? '' : i?.nota || '')}" placeholder="Opcional"></label>
+    </div>
+    ${i && i.fuente !== 'manual' ? `<p class="nota">${esFijo ? 'Registrado solo por tu ingreso fijo.' : 'Registrado por un aviso del banco.'}</p>` : ''}
+    <div class="acciones">
+      ${i ? `<button type="button" class="btn peligro" data-accion="borrar-ingreso" data-id="${i.id}" aria-label="Borrar ingreso">${ico('basura')}</button>` : ''}
+      <button type="submit" class="btn primario">Guardar</button>
+    </div>`);
+  enlazarTipo(f);
+  f.querySelectorAll('input[name="moneda"]').forEach(r => r.addEventListener('change', () => { $('.simbolo', f).textContent = r.value === 'USD' ? '$' : '₡'; }));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const monto = leerMontoCampo(f.monto.value);
+    if (!monto) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
+    const fila = { monto, moneda: valorRadio(f, 'moneda'), origen: f.origen.value.trim() || null, fecha: new Date(f.fecha.value || Date.now()).toISOString() };
+    if (!esFijo) fila.nota = f.nota.value.trim() || null;
+    if (i) Object.assign(i, await api.actualizar('ingresos', i.id, fila));
+    else S.ingresos.push(await api.insertar('ingresos', { ...fila, fuente: pre.fuente || 'manual', referencia: pre.referencia || null }));
+    S.ingresos.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    cerrarHoja(); render(); toast(i ? 'Ingreso actualizado' : 'Ingreso agregado');
+  });
+}
+
+function vistaFijos() {
+  return `${top('Ingresos fijos', { atras: true })}
+  <section class="pila">
+    ${S.fijos.map(f => {
+      const p = proximoFijo(f);
+      return `<button class="item" data-accion="editar-fijo" data-id="${f.id}" ${f.activo ? '' : 'style="opacity:.55"'}>
+        ${anillo(1, 'neutro', 'monedas')}
+        <span class="nombre">${esc(f.nombre)}<small>${f.activo ? `Próximo: ${p.getDate()} ${MESES[p.getMonth()]}` : 'Pausado'}</small></span>
+        <span class="valor"><b class="bien">${fmt(f.monto, f.moneda)}</b><span>${f.frecuencia === 'quincenal' ? `días ${f.dia1} y ${f.dia2 || 30}` : `día ${f.dia1}`}</span></span></button>`;
+    }).join('')}
+    ${S.fijos.length ? '' : `<div class="vacio">${ico('monedas')}<div>Agregá tu salario con el botón ＋.<br>Se registra solo cada día de pago.</div></div>`}
+  </section>
+  <p class="nota">El monto es lo que te entra en cada pago, no el total del mes. Los ingresos que no son fijos se agregan desde Inicio con el botón ＋ → Ingreso.</p>`;
+}
+
+function hojaFijo(x = null) {
+  const f = abrirHoja(x ? 'Editar ingreso fijo' : 'Nuevo ingreso fijo', `
+    <div class="monto-grande">
+      <div class="fila-monto"><span class="simbolo">${x?.moneda === 'USD' ? '$' : '₡'}</span>
+        <input name="monto" inputmode="decimal" placeholder="0" value="${x?.monto ?? ''}" aria-label="Monto de cada pago"></div>
+      ${alternarMoneda('moneda', x?.moneda || 'CRC')}
+      <small class="nota" style="margin:8px 0 0">lo que entra en cada pago</small>
+    </div>
+    <div class="campos">
+      <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(x?.nombre || 'Salario')}" autocomplete="off"></label>
+      <label class="campo"><span>Frecuencia</span><select name="frecuencia"><option value="quincenal">Quincenal</option><option value="mensual" ${x?.frecuencia === 'mensual' ? 'selected' : ''}>Mensual</option></select></label>
+      <label class="campo"><span>Día de pago</span><input name="dia1" inputmode="numeric" value="${x?.dia1 ?? 15}"></label>
+      <label class="campo" data-segundo ${x?.frecuencia === 'mensual' ? 'hidden' : ''}><span>Segundo día</span><input name="dia2" inputmode="numeric" value="${x?.dia2 ?? 30}"></label>
+      ${x ? `<label class="campo"><span style="color:var(--tinta)">Activo</span><span class="interruptor"><input type="checkbox" name="activo" ${x.activo ? 'checked' : ''}><span></span></span></label>` : ''}
+    </div>
+    <p class="nota">Si el mes no tiene ese día (30 en febrero), se usa el último día del mes.</p>
+    <div class="acciones">
+      ${x ? `<button type="button" class="btn peligro" data-accion="borrar-fijo" data-id="${x.id}" aria-label="Eliminar ingreso fijo">${ico('basura')}</button>` : ''}
+      <button type="submit" class="btn primario">Guardar</button>
+    </div>`);
+  f.frecuencia.addEventListener('change', () => { f.querySelector('[data-segundo]').hidden = f.frecuencia.value !== 'quincenal'; });
+  f.querySelectorAll('input[name="moneda"]').forEach(r => r.addEventListener('change', () => { $('.simbolo', f).textContent = r.value === 'USD' ? '$' : '₡'; }));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const monto = leerMontoCampo(f.monto.value), d1 = Math.round(Number(f.dia1.value)), d2 = Math.round(Number(f.dia2.value));
+    const quinc = f.frecuencia.value === 'quincenal';
+    if (!monto) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
+    if (!f.nombre.value.trim()) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
+    if (!(d1 >= 1 && d1 <= 31)) { f.dia1.classList.add('mal-campo'); f.dia1.focus(); return; }
+    if (quinc && !(d2 >= 1 && d2 <= 31 && d2 !== d1)) { f.dia2.classList.add('mal-campo'); f.dia2.focus(); return; }
+    const fila = { nombre: f.nombre.value.trim(), monto, moneda: valorRadio(f, 'moneda'), frecuencia: f.frecuencia.value, dia1: d1, dia2: quinc ? d2 : null, activo: x ? f.activo.checked : true };
+    if (x) Object.assign(x, await api.actualizar('ingresos_fijos', x.id, fila));
+    else S.fijos.push(await api.insertar('ingresos_fijos', fila));
+    await registrarFijos();
+    cerrarHoja(); render(); toast('Ingreso fijo guardado');
+  });
+}
+
+function vistaSobres() {
   const c = ciclo(), lista = enCiclo(c), mv = S.cfg.moneda_vista;
   const total = S.sobres.filter(s => s.presupuesto > 0).reduce((a, s) => a + conv(s.presupuesto - gastadoSobre(s, lista), s.moneda, mv), 0);
   const pendientes = S.gastos.filter(g => !g.sobre_id && new Date(g.fecha) >= c.ini).length;
   const prox = S.subs.filter(s => s.activa).map(s => ({ s, d: Math.round((proximoCobro(s) - new Date().setHours(0, 0, 0, 0)) / 864e5) })).filter(x => x.d <= 2);
   return `
-  ${top(NOMBRE_APP, { derecha: `<button class="redondo" data-accion="menu" aria-label="Más opciones">${ico('puntos')}</button>` })}
+  ${top('Sobres', { derecha: `<button class="redondo" data-accion="menu" aria-label="Más opciones">${ico('puntos')}</button>` })}
   <div class="destacada">
     <div class="lado">
       <button class="chip-moneda" data-accion="cambiar-moneda" aria-label="Cambiar moneda">${mv} ${ico('abajo')}</button>
@@ -214,6 +500,8 @@ function vistaGastos() {
       </button>`;
     }).join('')}
     <button class="item punteado" data-accion="nuevo-sobre">${ico('mas')} Nuevo sobre</button>
+    <button class="item" data-accion="ir" data-v="suscripciones">${anillo(1, 'neutro', 'calendario')}
+      <span class="nombre">Suscripciones<small>${S.subs.filter(s => s.activa).length} activas</small></span>${ico('derecha', 'fin')}</button>
   </section>`;
 }
 
@@ -235,7 +523,7 @@ function vistaSuscripciones() {
   const mensual = activas.reduce((a, s) => a + conv(s.frecuencia === 'anual' ? s.monto / 12 : s.monto, s.moneda, mv), 0);
   const lista = [...S.subs].sort((a, b) => (b.activa - a.activa) || (proximoCobro(a) - proximoCobro(b)));
   return `
-  ${top('Suscripciones')}
+  ${top('Suscripciones', { atras: true })}
   <div class="destacada"><span class="lado"><b style="font-size:19px;font-weight:600">Total mensual</b></span>
     <span class="lado der"><b>${fmt(mensual, mv)}</b></span></div>
   <div class="separador"></div>
@@ -257,13 +545,14 @@ const filaAjuste = (icono, texto, v, valor = '') =>
 
 function vistaAjustes() {
   return `
-  ${top('Ajustes')}
+  ${top('Configuración', { atras: true })}
   <div class="titulo">Cuenta</div>
   <div class="grupo">${filaAjuste('usuario', 'Cuenta', 'cuenta')}</div>
   <div class="titulo">Sobres</div>
   <div class="grupo">
     ${filaAjuste('moneda', 'Monedas', 'monedas', S.cfg.moneda_vista)}
     ${filaAjuste('tarjeta', 'Métodos de pago', 'metodos', S.metodos.length || '')}
+    ${filaAjuste('monedas', 'Ingresos fijos', 'fijos', S.fijos.length || '')}
     ${filaAjuste('reinicio', 'Reinicio automático', 'reinicio', 'Día ' + S.cfg.dia_cierre)}
   </div>
   <div class="titulo">General</div>
@@ -467,10 +756,12 @@ function vistaAvisos() {
   return `${top('Avisos del banco', { atras: true })}
   <p class="nota" style="margin:-4px 4px 14px">Para compras con tarjeta física y SINPE Móvil que no pasan por Apple Pay. El BAC manda un SMS o un correo por cada compra; un atajo lo lee y registra el gasto.</p>
   ${datosAtajo()}
-  <div class="titulo" style="margin-top:26px">SMS</div>
+  <div class="titulo" style="margin-top:26px">SMS de SINPE</div>
+  <p class="nota" style="margin:0 4px 12px">El BAC avisa por SMS cada SINPE. Los que recibís entran como ingreso, con el nombre de quien envió; los que enviás entran como gasto. Cada uno se registra una sola vez por su número de referencia.</p>
   <div class="pasos">
-    <div class="paso"><b>Automatización de Mensaje</b>Remitente: el número del BAC. Ejecutar inmediatamente.</div>
-    <div class="paso"><b>Mandá el texto</b><code>Obtener contenido de URL</code> con método POST y tres campos de texto: <code>token</code> = tu Token, <code>fuente</code> = sms, <code>texto</code> = Entrada del atajo. Si querés aviso, agregá lo de "Ver un aviso al pagar" de Apple Pay.</div>
+    <div class="paso"><b>Nueva automatización</b>App Atajos → ＋ → buscá el disparador <b style="display:inline">Mensaje</b>. En Remitente poné el número del que llegan los avisos del BAC, y en "El mensaje contiene" escribí <code>SINPE</code>.</div>
+    <div class="paso"><b>La misma acción</b>Agregá <code>Obtener contenido de URL</code> con la Dirección de arriba, Método <code>POST</code> y cuerpo JSON.</div>
+    <div class="paso"><b>Dos campos de texto</b><code>token</code> → tu Token<br><code>texto</code> → Entrada del atajo (el mensaje; si pide elegir, <b style="display:inline">Contenido</b>)</div>
   </div>
   <div class="titulo" style="margin-top:26px">Correo</div>
   <div class="pasos">
@@ -504,21 +795,29 @@ const vistaAcerca = () => `${top('Acerca de', { atras: true })}
 
 // ================= render =================
 const VISTAS = {
-  gastos: vistaGastos, ahorros: vistaAhorros, suscripciones: vistaSuscripciones, ajustes: vistaAjustes,
+  inicio: vistaInicio, sobres: vistaSobres, ahorros: vistaAhorros, movs: vistaMovs,
+  suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos,
   sobre: vistaSobre, movimientos: vistaMovimientos, sinsobre: vistaSinSobre, historial: vistaHistorialGeneral,
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
   avisos: vistaAvisos, personalizacion: vistaPersonalizacion, acerca: vistaAcerca, descargas: vistaDescargas,
 };
-const TABS = [['gastos', 'carrito', 'Gastos'], ['ahorros', 'billete', 'Ahorros'], ['suscripciones', 'calendario', 'Suscripciones'], ['ajustes', 'ajustes', 'Ajustes']];
+const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Sobres'], ['ahorros', 'alcancia', 'Ahorros'], ['movs', 'buscar', 'Movimientos']];
 
 function render(animar = false) {
   const v = vistaActual();
   const el = $('#vista');
   el.innerHTML = VISTAS[v.v](v);
   if (animar) { el.style.animation = 'none'; void el.offsetWidth; el.style.animation = ''; }
-  $('.tabs').innerHTML = TABS.map(([k, i, t]) => `<button class="${S.tab === k ? 'activa' : ''}" data-accion="tab" data-v="${k}" ${S.tab === k ? 'aria-current="page"' : ''}>${ico(i)}${t}</button>`).join('');
+  // la barra se arma una vez; después solo se mueve la pastilla, así el cambio se ve deslizar
+  const barra = $('.tabs');
+  if (!barra.dataset.lista) {
+    barra.innerHTML = '<span class="pill"></span>' + TABS.map(([k, i, t]) => `<button data-accion="tab" data-v="${k}">${ico(i)}${t}</button>`).join('');
+    barra.dataset.lista = '1';
+  }
+  barra.style.setProperty('--i', Math.max(0, TABS.findIndex(x => x[0] === S.tab)));
+  barra.querySelectorAll('button').forEach(b => { const on = b.dataset.v === S.tab; b.classList.toggle('activa', on); on ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'); });
   const fab = $('.fab');
-  const fabVisible = ['gastos', 'ahorros', 'suscripciones', 'sobre', 'movimientos'].includes(v.v);
+  const fabVisible = ['inicio', 'sobres', 'ahorros', 'movs', 'suscripciones', 'sobre', 'movimientos', 'fijos'].includes(v.v);
   fab.hidden = !fabVisible;
   fab.innerHTML = ico('mas');
 }
@@ -578,7 +877,7 @@ function hojaGasto(g = null, pre = {}) {
   const fecha = new Date(base.fecha || Date.now());
   const local = new Date(fecha - fecha.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
   const automatico = g && g.fuente !== 'manual' && g.fuente !== 'suscripcion';
-  const f = abrirHoja(g ? 'Editar gasto' : 'Nuevo gasto', `
+  const f = abrirHoja(g ? 'Editar gasto' : 'Nuevo gasto', `${g || pre.fuente ? '' : selectorTipo('gasto')}
     <div class="monto-grande">
       <div class="fila-monto"><span class="simbolo">${base.moneda === 'USD' ? '$' : '₡'}</span>
         <input name="monto" inputmode="decimal" placeholder="0" value="${base.monto ?? ''}" autofocus aria-label="Monto"></div>
@@ -600,6 +899,7 @@ function hojaGasto(g = null, pre = {}) {
       ${g ? `<button type="button" class="btn peligro" data-accion="borrar-gasto" data-id="${g.id}" aria-label="Borrar gasto">${ico('basura')}</button>` : ''}
       <button type="submit" class="btn primario">Guardar</button>
     </div>`);
+  enlazarTipo(f);
   let tocoSobre = !!(g || pre.sobre_id);
   f.querySelectorAll('input[name="sobre"]').forEach(r => r.addEventListener('change', () => { tocoSobre = true; }));
   f.querySelectorAll('input[name="moneda"]').forEach(r => r.addEventListener('change', () => { $('.simbolo', f).textContent = r.value === 'USD' ? '$' : '₡'; }));
@@ -932,6 +1232,11 @@ async function descargarExcel() {
       'Origen': FUENTES[g.fuente] || g.fuente, 'Nota': /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '',
     };
   }), [18, 26, 12, 8, 14, 18, 16, 8, 14, 24]);
+  hoja('Ingresos', S.ingresos.filter(i => { const f = new Date(i.fecha); return f >= r.desde && f <= r.hasta; }).map(i => ({
+    'Fecha': new Date(i.fecha), 'De': i.origen || '', 'Monto': Number(i.monto), 'Moneda': i.moneda,
+    'Origen': i.fuente === 'fijo' ? 'Ingreso fijo' : i.fuente === 'manual' ? 'A mano' : 'Aviso del banco',
+    'Nota': /^fijo:/.test(i.nota || '') ? '' : i.nota || '',
+  })), [18, 30, 14, 8, 16, 24]);
   hoja('Sobres', S.sobres.map(s => ({ 'Sobre': s.nombre, 'Moneda': s.moneda, 'Presupuesto mensual': s.presupuesto > 0 ? Number(s.presupuesto) : null })), [22, 8, 20]);
   hoja('Ahorros', S.ahorros.map(a => ({
     'Sobre de ahorro': a.nombre, 'Moneda': a.moneda, 'Meta': a.meta > 0 ? Number(a.meta) : null, 'Ahorrado': Number(a.ahorrado),
@@ -985,12 +1290,18 @@ function leerAvisoPegado() {
   const txt = $('#aviso-txt').value, res = $('#aviso-res');
   const a = leerAviso({ texto: txt });
   if (!a.ok) { res.innerHTML = `<div class="resultado error">No lo pude leer: ${esc(a.motivo)}.</div>`; return; }
+  if (a.tipo === 'ingreso') {
+    S.avisoLeido = { ingreso: true, monto: a.monto, moneda: a.moneda, origen: a.origen, fuente: 'sms', referencia: a.referencia };
+    res.innerHTML = `<div class="resultado"><b>Ingreso de ${fmt(a.monto, a.moneda)}</b>${a.origen ? ' de ' + esc(a.origen) : ''}</div>
+      <div class="acciones"><button class="btn primario" data-accion="registrar-aviso">Revisar y registrar</button></div>`;
+    return;
+  }
   const m = S.metodos.find(x => x.ultimos4 && x.ultimos4 === a.tarjeta);
   const regla = a.comercio && S.reglas.find(r => r.comercio === normalizarComercio(a.comercio));
   const sobre = m?.sobre_id || S.cfg.atajo_sobre_id || (S.cfg.atajo_recordar && regla ? regla.sobre_id : '');
   S.avisoLeido = { monto: a.monto, moneda: a.moneda, comercio: a.comercio, tarjeta: a.tarjeta, metodo_id: m?.id, sobre_id: sobre, fuente: 'sms' };
   res.innerHTML = `<div class="resultado"><b>${fmt(a.monto, a.moneda)}</b>${a.comercio ? ' en ' + esc(a.comercio) : ''}${a.tarjeta ? ' · tarjeta •••• ' + a.tarjeta : ''}
-    <br><small>${sobre ? 'Va al sobre ' + esc(sobreDe(sobre)?.nombre || '') : 'Te va a preguntar el sobre'}</small></div>
+    <br><small>${sobre ? 'Va al sobre ' + esc(sobreDe(sobre)?.nombre || '') : 'Elegí el sobre al registrarlo'}</small></div>
     <div class="acciones"><button class="btn primario" data-accion="registrar-aviso">Revisar y registrar</button></div>`;
 }
 
@@ -1002,7 +1313,26 @@ async function accion(el) {
   if (a !== 'menu' && a !== 'menu-sobre') cerrarMenu();
   switch (a) {
     case 'tab': S.tab = el.dataset.v; S.pila = []; render(true); scrollTo(0, 0); break;
-    case 'ir': cerrarHoja(); ir(el.dataset.v); break;
+    case 'panel': abrirPanel(); break;
+    case 'cerrar-panel': cerrarPanel(); break;
+    case 'nuevo-ingreso': hojaIngreso(); break;
+    case 'editar-ingreso': hojaIngreso(S.ingresos.find(i => i.id === id)); break;
+    case 'editar-fijo': hojaFijo(S.fijos.find(x => x.id === id)); break;
+    case 'borrar-ingreso':
+      if (!confirm('¿Borrar este ingreso?')) return;
+      await api.borrar('ingresos', id); S.ingresos = S.ingresos.filter(i => i.id !== id); cerrarHoja(); render(); toast('Ingreso borrado'); break;
+    case 'borrar-fijo':
+      if (!confirm('¿Eliminar este ingreso fijo? Los ingresos ya registrados se quedan.')) return;
+      await api.borrar('ingresos_fijos', id); S.fijos = S.fijos.filter(x => x.id !== id); cerrarHoja(); render(); break;
+    case 'filtro-mov': {
+      S.mov.filtro = el.dataset.valor;
+      const seg = $('#seg-mov');
+      seg.style.setProperty('--i', FILTROS_MOV.findIndex(x => x[0] === S.mov.filtro));
+      seg.querySelectorAll('button').forEach(b => { const on = b.dataset.valor === S.mov.filtro; b.classList.toggle('activo', on); b.setAttribute('aria-selected', on); });
+      $('#res-movs').innerHTML = resMovs();
+      break;
+    }
+    case 'ir': cerrarHoja(); cerrarPanel(); ir(el.dataset.v); break;
     case 'atras': S.pila.pop(); render(true); break;
     case 'menu': $('#menu') ? cerrarMenu() : abrirMenu(); break;
     case 'cerrar-menu': break;
@@ -1011,7 +1341,7 @@ async function accion(el) {
     case 'menu-sobre': $('#menu') ? cerrarMenu() : abrirMenuSobre(sobreDe(id)); break;
     case 'nuevo': {
       const v = vistaActual().v;
-      if (v === 'ahorros') hojaAhorro(); else if (v === 'suscripciones') hojaSub(); else hojaGasto();
+      if (v === 'ahorros') hojaAhorro(); else if (v === 'suscripciones') hojaSub(); else if (v === 'fijos') hojaFijo(); else hojaGasto();
       break;
     }
     case 'nuevo-sobre': hojaSobre(); break;
@@ -1057,7 +1387,7 @@ async function accion(el) {
       break;
     case 'exportar': exportar(); break;
     case 'leer-aviso': leerAvisoPegado(); break;
-    case 'registrar-aviso': hojaGasto(null, S.avisoLeido); break;
+    case 'registrar-aviso': S.avisoLeido?.ingreso ? hojaIngreso(null, S.avisoLeido) : hojaGasto(null, S.avisoLeido); break;
     case 'salir': await api.salir(); location.reload(); break;
   }
 }
@@ -1096,9 +1426,14 @@ document.addEventListener('focusout', (e) => {
   // en los campos chicos, al salir se completan los decimales
   if (t.matches && t.matches(SEL_MONTO) && !t.closest('.monto-grande') && t.value) { const n = leerMontoCampo(t.value); t.value = n ? numATexto(n) + (t.value.includes(',') ? '' : ',00') : ''; if (/,\d$/.test(t.value)) t.value += '0'; }
 });
+document.addEventListener('input', (e) => {
+  if (!e.target.matches || !e.target.matches('[data-buscar]')) return;
+  S.mov.q = e.target.value;
+  $('#res-movs').innerHTML = resMovs();
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if ($('#menu')) cerrarMenu(); else if (!$('#hoja').hidden) cerrarHoja();
+  if ($('#menu')) cerrarMenu(); else if (!$('#hoja').hidden) cerrarHoja(); else cerrarPanel();
 });
 
 // ================= acceso =================
@@ -1138,4 +1473,7 @@ async function iniciar() {
 }
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+let toqueX = null;
+document.addEventListener('touchstart', (e) => { toqueX = e.target.closest && e.target.closest('.cajon') ? e.touches[0].clientX : null; }, { passive: true });
+document.addEventListener('touchend', (e) => { if (toqueX != null && e.changedTouches[0].clientX - toqueX < -50) cerrarPanel(); toqueX = null; }, { passive: true });
 iniciar();
