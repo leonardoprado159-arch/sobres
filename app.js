@@ -363,24 +363,25 @@ function vistaMovs() {
 // ---------- panel lateral (configuración) ----------
 function abrirPanel() {
   const p = $('#panel');
-  const fila = (icono, txt, v) => `<button class="fila" data-accion="ir" data-v="${v}">${ico(icono)}<span class="txt"><b>${txt}</b></span></button>`;
+  const fila = (icono, color, txt, sub, v) => `<button class="fila cfg" data-accion="ir" data-v="${v}">
+    <span class="tile" style="color:var(--${color});background:color-mix(in srgb, var(--${color}) 14%, var(--fondo))">${ico(icono)}</span>
+    <span class="txt"><b>${txt}</b>${sub ? `<small>${sub}</small>` : ''}</span></button>`;
   const n = S.gastos.filter(g => !g.sobre_id).length;
+  const activos = S.subs.filter(s => s.activa).length;
   p.innerHTML = `<div class="velo" data-accion="cerrar-panel"></div>
   <aside class="cajon" role="dialog" aria-label="Menú">
-    <div class="cajon-cab"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b><small>${esc(modoDemo ? 'Modo demo' : S.usuario?.email || '')}</small></span></div>
+    <h2 class="cajon-titulo">Menú</h2>
+    <button class="cajon-cab" data-accion="ir" data-v="cuenta"><img src="icon.svg" alt=""><span><b>${NOMBRE_APP}</b><small>${esc(modoDemo ? 'Modo demo' : S.usuario?.email || '')}</small></span></button>
     <div class="cajon-lista">
-      ${fila('carpeta', 'Configurar categorías', 'catcfg')}
-      ${fila('monedas', 'Ingresos fijos', 'fijos')}
-      ${fila('tarjeta', 'Métodos de pago', 'metodos')}
-      ${fila('calendario', 'Gastos fijos y cuotas', 'suscripciones')}
-      ${fila('bandeja', `Gastos sin categoría${n ? ` (${n})` : ''}`, 'sinsobre')}
-      ${fila('historial', 'Historial', 'historial')}
-      ${fila('descargar', 'Descargar datos', 'descargas')}
+      ${n ? fila('bandeja', 's4', 'Gastos sin categoría', `${n} por asignar`, 'sinsobre') : ''}
+      ${fila('carpeta', 's1', 'Categorías', 'Colores, grupos y límites', 'catcfg')}
+      ${fila('calendario', 's2', 'Gastos fijos y cuotas', activos ? `${activos} activos` : '', 'suscripciones')}
+      ${fila('monedas', 's6', 'Ingresos fijos', '', 'fijos')}
+      ${fila('descargar', 's3', 'Exportar datos', '', 'descargas')}
     </div>
     <div class="cajon-pie">
-      ${fila('magia', 'Trackear con Apple Pay', 'applepay')}
-      ${fila('mensaje', 'Avisos del banco', 'avisos')}
-      ${fila('ajustes', 'Configuración', 'ajustes')}
+      ${fila('celular', 's8', 'Atajos de iOS', '', 'applepay')}
+      ${fila('ajustes', 's-otros', 'Configuración', '', 'ajustes')}
     </div>
   </aside>`;
   p.hidden = false;
@@ -913,6 +914,11 @@ function vistaSobres() {
 }
 
 async function agregarSugeridas(tipo) {
+  if (S.ocupado) return;   // un segundo toque no vuelve a crearlas
+  S.ocupado = true;
+  try { await crearSugeridas(tipo); } finally { S.ocupado = false; }
+}
+async function crearSugeridas(tipo) {
   const nuevas = faltanSugeridas(tipo);
   let orden = S.sobres.length + S.catsIng.length;
   for (const [nombre, icono, grupo] of nuevas) {
@@ -966,29 +972,58 @@ function vistaSuscripciones() {
 
 const filaAjuste = (icono, texto, v, valor = '') =>
   `<button class="fila" data-accion="ir" data-v="${v}">${ico(icono)}<span class="txt"><b>${texto}</b></span>${valor ? `<span class="valor-txt">${valor}</span>` : ''}${ico('derecha', 'fin')}</button>`;
+// fila de configuración: ícono en cuadro de color, título y descripción
+const filaCfg = (icono, color, titulo, sub, v) => `<button class="fila cfg" data-accion="ir" data-v="${v}">
+  <span class="tile" style="color:var(--${color});background:color-mix(in srgb, var(--${color}) 14%, var(--fondo))">${ico(icono)}</span>
+  <span class="txt"><b>${titulo}</b><small>${sub}</small></span>${ico('derecha', 'fin')}</button>`;
 
 function vistaAjustes() {
+  const mv = S.cfg.moneda_vista;
+  const nCat = S.sobres.length + S.catsIng.length;
+  const sinCat = S.gastos.filter(g => !g.sobre_id).length;
+  const activos = S.subs.filter(s => s.activa).length;
+  const conectado = S.gastos.some(g => g.fuente === 'applepay');
+  const temas = { auto: 'Automático', claro: 'Claro', oscuro: 'Oscuro' };
   return `
-  ${top('Configuración', { atras: true })}
-  <div class="titulo">Cuenta</div>
-  <div class="grupo">${filaAjuste('usuario', 'Cuenta', 'cuenta')}</div>
-  <div class="titulo">Categorías</div>
+  <header class="top">
+    <button class="redondo" data-accion="atras" aria-label="Volver">${ico('izquierda')}</button>
+    <div class="titulo-doble"><b>Configuración</b><small>General y cuenta</small></div>
+  </header>
+  <button class="cuenta-cfg" data-accion="ir" data-v="cuenta">
+    <img src="icon.svg" alt=""><span><b>${esc(modoDemo ? 'Modo demo' : S.usuario?.email || 'Cuenta')}</b><small>${NOMBRE_APP} · tu cuenta</small></span>${ico('derecha', 'fin')}</button>
+
+  <div class="titulo">Finanzas</div>
   <div class="grupo">
-    ${filaAjuste('moneda', 'Monedas', 'monedas', S.cfg.moneda_vista)}
-    ${filaAjuste('tarjeta', 'Métodos de pago', 'metodos', S.metodos.length || '')}
-    ${filaAjuste('monedas', 'Ingresos fijos', 'fijos', S.fijos.length || '')}
+    ${filaCfg('moneda', 's3', 'Moneda', `${mv === 'USD' ? 'USD · Dólar' : 'CRC · Colón costarricense'} · ₡${numATexto(S.cfg.tipo_cambio)} por $1`, 'monedas')}
+    ${filaCfg('carpeta', 's1', `Categorías (${nCat})`, 'Colores, grupos, límites y archivo', 'catcfg')}
+    ${filaCfg('tarjeta', 's7', 'Métodos de pago', S.metodos.length ? `${S.metodos.length} ${S.metodos.length === 1 ? 'registrado' : 'registrados'}` : 'Tarjetas, SINPE y efectivo', 'metodos')}
+    ${filaCfg('monedas', 's6', 'Ingresos fijos', S.fijos.length ? `${S.fijos.length} ${S.fijos.length === 1 ? 'programado' : 'programados'}` : 'Salario y pagos que se repiten', 'fijos')}
+    ${filaCfg('calendario', 's2', 'Gastos fijos y cuotas', activos ? `${activos} ${activos === 1 ? 'activo' : 'activos'}` : 'Mensuales, suscripciones y tasa cero', 'suscripciones')}
   </div>
+
+  <div class="titulo">Registro automático</div>
+  <div class="grupo">
+    ${filaCfg('celular', 's8', 'Atajos de iOS', conectado ? 'Apple Pay conectado' : 'Conectar Apple Pay', 'applepay')}
+    ${filaCfg('mensaje', 's5', 'Avisos del banco', 'SINPE y compras por SMS o correo', 'avisos')}
+  </div>
+
   <div class="titulo">General</div>
   <div class="grupo">
-    ${filaAjuste('magia', 'Trackear con Apple Pay', 'applepay')}
-    ${filaAjuste('mensaje', 'Avisos del banco', 'avisos')}
-    ${filaAjuste('pincel', 'Personalización', 'personalizacion')}
+    ${filaCfg('pincel', 's7', 'Tema y color', temas[S.cfg.tema] || 'Automático', 'personalizacion')}
   </div>
-  <div class="titulo">Más</div>
+
+  <div class="titulo">Datos</div>
   <div class="grupo">
-    ${filaAjuste('descargar', 'Descargar datos', 'descargas', 'Excel · PDF')}
-    ${filaAjuste('info', 'Acerca de', 'acerca')}
-  </div>`;
+    ${filaCfg('descargar', 's3', 'Exportar datos', 'Excel, informe PDF o CSV', 'descargas')}
+    ${filaCfg('historial', 's1', 'Historial', 'Promedios y meses anteriores', 'historial')}
+    ${filaCfg('bandeja', 's4', 'Gastos sin categoría', sinCat ? `${sinCat} por asignar` : 'Todo está asignado', 'sinsobre')}
+  </div>
+
+  <div class="titulo">Acerca</div>
+  <div class="grupo">
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 3`, 'acerca')}
+  </div>
+  ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
 
 // ================= vistas: detalle =================
