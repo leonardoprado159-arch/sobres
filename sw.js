@@ -1,5 +1,5 @@
 // Responde al instante con la copia guardada, la actualiza por detrás y avisa a la app si cambió.
-const CACHE = 'whiplash-v4';
+const CACHE = 'whiplash-v5';
 const EXTERNOS = ['cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -19,7 +19,9 @@ self.addEventListener('fetch', (e) => {
   const propio = url.origin === location.origin;
   if (!propio && !EXTERNOS.includes(url.hostname)) return; // los datos nunca se guardan aquí
   e.respondWith(caches.open(CACHE).then(async (c) => {
-    const guardada = await c.match(e.request);
+    let guardada = await c.match(e.request);
+    // una copia "opaca" no sirve para un pedido que exige leer la respuesta (los scripts con huella): se ignora
+    if (guardada && guardada.type === 'opaque' && e.request.mode === 'cors') guardada = undefined;
     // lo propio se pide siempre fresco al servidor, sin pasar por la caché del navegador
     const pedido = propio ? fetch(url.href, { cache: 'no-cache' }) : fetch(e.request);
     const red = pedido.then(async (r) => {
