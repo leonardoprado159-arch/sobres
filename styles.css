@@ -627,7 +627,9 @@ button.cajon-cab { width: 100%; text-align: left; }
 
 /* ---------- cuentas, avisos de límite y resumen ---------- */
 .tira-cuentas { display: flex; align-items: center; gap: 18px; width: 100%; text-align: left; background: var(--carta); border-radius: 22px; padding: 14px 16px 14px 20px; margin-top: 12px; }
-.tira-cuentas > span { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.tira-rollo { display: flex; gap: 22px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.tira-rollo::-webkit-scrollbar { display: none; }
+.tira-rollo > span { display: flex; flex-direction: column; flex: none; max-width: 150px; }
 .tira-cuentas small { color: var(--suave); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tira-cuentas b { font-size: 17px; font-weight: 700; white-space: nowrap; }
 .tira-cuentas > .fin { color: var(--tenue); width: 18px; height: 18px; flex: none; }

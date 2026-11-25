@@ -17,10 +17,10 @@ const MESES_L = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
 const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 const FUENTES = { manual: 'A mano', applepay: 'Apple Pay', sms: 'SMS', correo: 'Correo', suscripcion: 'Suscripción', ahorro: 'Pasado a ahorro' };
 const TIPOS_METODO = {
-  tarjeta: ['Tarjeta', 'tarjeta'], debito: ['Tarjeta de débito', 'tarjeta'], credito: ['Tarjeta de crédito', 'tarjeta'],
+  cuenta: ['Cuenta bancaria', 'billete'], tarjeta: ['Tarjeta', 'tarjeta'], debito: ['Tarjeta de débito', 'tarjeta'], credito: ['Tarjeta de crédito', 'tarjeta'],
   sinpe: ['SINPE Móvil', 'sinpe'], efectivo: ['Efectivo', 'efectivo'], otro: ['Otro', 'billete'],
 };
-const METODOS_RAPIDOS = [['SINPE Móvil', 'sinpe'], ['Tarjeta de débito', 'debito'], ['Tarjeta de crédito', 'credito'], ['Efectivo', 'efectivo']];
+const METODOS_RAPIDOS = [['Cuenta bancaria', 'cuenta'], ['SINPE Móvil', 'sinpe'], ['Tarjeta de débito', 'debito'], ['Tarjeta de crédito', 'credito'], ['Efectivo', 'efectivo']];
 const tipoMetodo = (m) => TIPOS_METODO[m.tipo] || TIPOS_METODO.otro;
 const ACENTOS = { verde: '#7ee8a3', azul: '#8cc8ff', morado: '#c4a8ff', naranja: '#ffc078' };
 const NOMBRE_APP = 'Whiplash';
@@ -549,7 +549,7 @@ function bloqueCuentas() {
   const sal = [...saldos().values()];
   if (!sal.length) return '';
   return `<button class="tira-cuentas" data-accion="ir" data-v="cuentas" aria-label="Ver cuentas">
-    ${sal.slice(0, 3).map(c => { const x = textoSaldo(c); return `<span><small>${esc(c.m.nombre)}${x.sub === 'debés' ? ' · debés' : ''}</small><b class="${x.cls}">${x.t}</b></span>`; }).join('')}
+    <span class="tira-rollo">${sal.map(c => { const x = textoSaldo(c); return `<span><small>${esc(c.m.nombre)}${x.sub === 'debés' ? ' · debés' : ''}</small><b class="${x.cls}">${x.t}</b></span>`; }).join('')}</span>
     ${ico('derecha', 'fin')}</button>`;
 }
 
@@ -1278,7 +1278,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 8`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 9`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1451,7 +1451,7 @@ function vistaMetodos() {
       <span class="txt"><b>${esc(m.nombre)}</b><small>${[m.ultimos4 ? '•••• ' + m.ultimos4 : tipoMetodo(m)[0], m.sobre_id ? 'Sobre: ' + esc(sobreDe(m.sobre_id)?.nombre || '') : ''].filter(Boolean).join(' · ')}</small></span>${ico('derecha', 'fin')}</button>`).join('')}
     <button class="fila" data-accion="nuevo-metodo" style="color:var(--bien)">${ico('mas')}<span class="txt"><b>Agregar otro método</b></span></button>
   </div>
-  <p class="nota">Las tarjetas que usés con Apple Pay se agregan solas aquí la primera vez que pagás con ellas. Tocá una para ponerle una categoría: todo lo que pagués con esa tarjeta cae ahí sin preguntar.</p>`;
+  <p class="nota">Tocá cualquiera para cambiarle el nombre (por ejemplo ponerle el banco), el tipo o el saldo. Podés tener todas las cuentas y tarjetas que querás. Las tarjetas que usés con Apple Pay se agregan solas aquí la primera vez que pagás con ellas. Tocá una para ponerle una categoría: todo lo que pagués con esa tarjeta cae ahí sin preguntar.</p>`;
 }
 
 function vistaReinicio() {
@@ -1515,18 +1515,18 @@ function datosAtajo() {
 
 function vistaAvisos() {
   return `${top('Avisos del banco', { atras: true })}
-  <p class="nota" style="margin:-4px 4px 14px">Para compras con tarjeta física y SINPE Móvil que no pasan por Apple Pay. El BAC manda un SMS o un correo por cada compra; un atajo lo lee y registra el gasto.</p>
+  <p class="nota" style="margin:-4px 4px 14px">Para compras con tarjeta física y SINPE Móvil que no pasan por Apple Pay. Tu banco manda un SMS o un correo por cada compra; un atajo lo lee y registra el gasto.</p>
   ${datosAtajo()}
   <div class="titulo" style="margin-top:26px">SMS de SINPE</div>
-  <p class="nota" style="margin:0 4px 12px">El BAC avisa por SMS cada SINPE. Los que recibís entran como ingreso, con el nombre de quien envió; los que enviás entran como gasto. Cada uno se registra una sola vez por su número de referencia.</p>
+  <p class="nota" style="margin:0 4px 12px">El banco avisa por SMS cada SINPE. Los que recibís entran como ingreso, con el nombre de quien envió; los que enviás entran como gasto. Cada uno se registra una sola vez por su número de referencia.</p>
   <div class="pasos">
-    <div class="paso"><b>Nueva automatización</b>App Atajos → ＋ → buscá el disparador <b style="display:inline">Mensaje</b>. En Remitente poné el número del que llegan los avisos del BAC, y en "El mensaje contiene" escribí <code>SINPE</code>.</div>
+    <div class="paso"><b>Nueva automatización</b>App Atajos → ＋ → buscá el disparador <b style="display:inline">Mensaje</b>. En Remitente poné el número del que llegan los avisos de tu banco, y en "El mensaje contiene" escribí <code>SINPE</code>.</div>
     <div class="paso"><b>La misma acción</b>Agregá <code>Obtener contenido de URL</code> con la Dirección de arriba, Método <code>POST</code> y cuerpo JSON.</div>
     <div class="paso"><b>Dos campos de texto</b><code>token</code> → tu Token<br><code>texto</code> → Entrada del atajo (el mensaje; si pide elegir, <b style="display:inline">Contenido</b>)</div>
   </div>
   <div class="titulo" style="margin-top:26px">Correo</div>
   <div class="pasos">
-    <div class="paso"><b>Automatización de Correo</b>Remitente: la dirección de notificaciones del BAC. La cuenta tiene que estar en la app Mail.</div>
+    <div class="paso"><b>Automatización de Correo</b>Remitente: la dirección de notificaciones de tu banco. La cuenta tiene que estar en la app Mail.</div>
     <div class="paso"><b>Mandá el contenido</b>Igual que el SMS, con <code>fuente</code> = correo.</div>
   </div>
   <div class="titulo" style="margin-top:26px">Probar o registrar a mano</div>
@@ -1551,7 +1551,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 8</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 9</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1785,7 +1785,7 @@ function hojaMetodo(m = null) {
   const mostrado = Math.round(Math.abs(actual) * 100) / 100;
   const f = abrirHoja(m ? 'Editar método' : 'Nuevo método de pago', `
     <div class="campos">
-      <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(m?.nombre || '')}" placeholder="BAC Visa" autofocus></label>
+      <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(m?.nombre || '')}" placeholder="Ej. Cuenta de ahorros, Visa…" autofocus></label>
       <label class="campo"><span>Tipo</span><select name="tipo">${Object.entries(TIPOS_METODO).map(([k, [t]]) => `<option value="${k}" ${(m?.tipo || 'tarjeta') === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label class="campo"><span>Últimos 4</span><input name="ultimos4" inputmode="numeric" maxlength="4" value="${esc(m?.ultimos4 || '')}" placeholder="1234"></label>
       <label class="campo"><span style="color:var(--tinta)">Llevar el saldo</span><span class="interruptor"><input type="checkbox" name="lleva_saldo" ${m?.lleva_saldo ? 'checked' : ''}><span></span></span></label>
@@ -2116,6 +2116,20 @@ async function descargarExcel() {
   const hoja = (nombre, filas, anchos) => {
     const h = X.utils.json_to_sheet(filas, { cellDates: true });
     h['!cols'] = anchos.map(w => ({ wch: w }));
+    if (h['!ref'] && filas.length) {
+      // montos con separador de miles y dos decimales, fechas legibles y filtro en los títulos
+      h['!autofilter'] = { ref: h['!ref'] };
+      const rg = X.utils.decode_range(h['!ref']);
+      for (let c = rg.s.c; c <= rg.e.c; c++) {
+        const tit = String(h[X.utils.encode_cell({ r: 0, c })]?.v || ''), entero = /Cantidad|Día/.test(tit);
+        for (let f = 1; f <= rg.e.r; f++) {
+          const cel = h[X.utils.encode_cell({ r: f, c })];
+          if (!cel) continue;
+          if (cel.t === 'n' && !entero) cel.z = '#,##0.00';
+          if (cel.t === 'd') cel.z = /^Fecha/.test(tit) ? 'dd/mm/yyyy hh:mm' : 'dd/mm/yyyy';
+        }
+      }
+    }
     X.utils.book_append_sheet(libro, h, nombre);
   };
   hoja('Resumen', filasResumen(r).map(f => ({
@@ -2124,7 +2138,7 @@ async function descargarExcel() {
     'Límite del mes': f.e.conPres ? f.limMes : null, 'Gastado': Math.round(f.gastado * 100) / 100,
     'Sobrante (+) / Sobregiro (−)': f.e.conPres ? Math.round((f.limMes - f.gastado) * 100) / 100 : null,
     'Estado': f.e.conPres ? f.e.etiqueta : 'sin presupuesto', 'Cantidad de gastos': f.n,
-  })), [22, 12, 28, 8, 14, 16, 16, 14, 26, 16, 10]);
+  })), [18, 12, 36, 8, 14, 18, 16, 14, 28, 16, 20]);
   hoja('Gastos', gastosRango(r).map(g => {
     const s = sobreDe(g.sobre_id);
     return {
@@ -2133,13 +2147,24 @@ async function descargarExcel() {
       'Categoría': s?.nombre || 'Sin categoría', 'Método de pago': metodoDe(g.metodo_id)?.nombre || '', 'Tarjeta': g.tarjeta || '',
       'Origen': FUENTES[g.fuente] || g.fuente, 'Estado': g.estado || 'pagado', 'Nota': /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '',
     };
-  }), [18, 26, 12, 8, 14, 18, 16, 8, 14, 24]);
+  }), [18, 26, 14, 8, 30, 36, 22, 8, 14, 12, 24]);
   hoja('Ingresos', S.ingresos.filter(i => { const f = new Date(i.fecha); return f >= r.desde && f <= r.hasta; }).map(i => ({
     'Fecha': new Date(i.fecha), 'De': i.origen || '', 'Monto': Number(i.monto), 'Moneda': i.moneda,
+    'Categoría': catIngDe(i.categoria_id)?.nombre || '', 'Cuenta': metodoDe(i.metodo_id)?.nombre || '',
     'Origen': i.fuente === 'fijo' ? 'Ingreso fijo' : i.fuente === 'manual' ? 'A mano' : 'Aviso del banco',
     'Nota': /^fijo:/.test(i.nota || '') ? '' : i.nota || '',
-  })), [18, 30, 14, 8, 16, 24]);
-  hoja('Sobres', S.sobres.map(s => ({ 'Categoría': s.nombre, 'Moneda': s.moneda, 'Presupuesto mensual': s.presupuesto > 0 ? Number(s.presupuesto) : null })), [22, 8, 20]);
+  })), [18, 30, 14, 8, 22, 18, 16, 24]);
+  const enRango = (x) => { const f = new Date(x.fecha); return f >= r.desde && f <= r.hasta; };
+  hoja('Traslados', S.traslados.filter(enRango).map(x => ({
+    'Fecha': new Date(x.fecha), 'Sale de': metodoDe(x.origen_id)?.nombre || 'Fuera de la app', 'Entra a': metodoDe(x.destino_id)?.nombre || 'Fuera de la app',
+    'Monto': Number(x.monto), 'Moneda': x.moneda, 'Nota': x.nota || '',
+  })), [18, 24, 24, 14, 8, 28]);
+  hoja('Cuentas', [...saldos().values()].map(c => ({
+    'Cuenta': c.m.nombre, 'Tipo': tipoMetodo(c.m)[0], 'Moneda': c.m.moneda || 'CRC',
+    'Saldo hoy': Math.round(c.saldo * 100) / 100, 'Lleva saldo desde': c.m.saldo_fecha ? new Date(c.m.saldo_fecha) : null,
+  })), [26, 20, 8, 16, 18]);
+  hoja('Categorías', [...S.sobres, ...S.catsIng].map(s => ({ 'Categoría': s.nombre, 'Tipo': s.tipo === 'ingreso' ? 'Ingreso' : 'Gasto', 'Grupo': s.grupo || '', 'Moneda': s.moneda,
+    'Límite': s.presupuesto > 0 ? Number(s.presupuesto) : null, 'Período del límite': s.presupuesto > 0 ? PER_CAT[perCat(s)][0] : '' })), [34, 10, 22, 8, 14, 18]);
   hoja('Ahorros', S.ahorros.map(a => ({
     'Sobre de ahorro': a.nombre, 'Moneda': a.moneda, 'Meta': a.meta > 0 ? Number(a.meta) : null, 'Ahorrado': Number(a.ahorrado),
     'Avance %': a.meta > 0 ? Math.round(a.ahorrado / a.meta * 1000) / 10 : null,
