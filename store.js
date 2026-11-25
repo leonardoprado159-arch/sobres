@@ -60,7 +60,7 @@ const backendDemo = {
   pendientes() { return 0; },
   vaciarCola() {},
   alEncolar: null,
-  urlFuncion: '',
+  urlFuncion: '', urlAvisos: '', async token() { return ''; },
 };
 
 // ---------- Supabase ----------
@@ -131,6 +131,8 @@ function backendSupabase() {
     async borrar(tabla, id) { await conCola({ op: 'borrar', tabla, id }, () => undefined); },
     sincronizar, pendientes: () => leerCola().length, vaciarCola: () => guardarCola([]), alEncolar: null,
     urlFuncion: CFG.url.replace(/\/$/, '') + '/functions/v1/registrar',
+    urlAvisos: CFG.url.replace(/\/$/, '') + '/functions/v1/avisar',
+    async token() { const { data } = await sb.auth.getSession(); return data.session?.access_token || ''; },
   };
   return backend;
 }
