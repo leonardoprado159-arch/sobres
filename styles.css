@@ -324,3 +324,28 @@ button { cursor: pointer; background: none; border: 0; padding: 0; text-align: i
 .chip-btn .i { width: 16px; height: 16px; }
 .chip-btn:active { transform: scale(.96); }
 .paso code { white-space: nowrap; }
+
+/* pantalla de un sobre */
+.tarjeta-sobre { background: var(--carta); border-radius: 24px; padding: 26px 24px 24px; margin-bottom: 26px; }
+.tarjeta-sobre h2 { display: flex; align-items: center; gap: 12px; font-size: 28px; font-weight: 700; margin: 0 0 14px; line-height: 1.15; overflow-wrap: anywhere; }
+.ico-sobre { color: var(--bien); display: grid; place-items: center; flex: none; }
+.ico-sobre.mal { color: var(--mal); }
+.ico-sobre .i { width: 30px; height: 30px; }
+.tarjeta-sobre p { margin: 0 0 8px; font-size: 19px; color: var(--suave); }
+.tarjeta-sobre p b { color: var(--tinta); font-weight: 600; }
+.tarjeta-sobre .saldo { display: flex; flex-direction: column; align-items: flex-end; margin-top: 6px; }
+.tarjeta-sobre .saldo b { font-size: 30px; font-weight: 700; letter-spacing: -.01em; line-height: 1.1; }
+.tarjeta-sobre .saldo span { font-size: 19px; color: var(--suave); }
+.enlace { color: var(--bien); font-weight: 600; text-decoration: underline; }
+.cab-mov { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 12px 2px; }
+.redondo.chico { width: 42px; height: 42px; }
+.redondo.chico .i { width: 20px; height: 20px; }
+.movs { padding: 4px 0; }
+.mov { display: flex; justify-content: space-between; gap: 14px; width: 100%; padding: 16px 20px; position: relative; text-align: left; }
+.mov + .mov::before { content: ""; position: absolute; top: 0; left: 20px; right: 20px; height: 1px; background: var(--linea); }
+.mov-izq { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 50%; }
+.mov-izq b { font-weight: 600; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mov-izq small { color: var(--suave); font-size: 15px; }
+.mov-der { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 1 48%; text-align: left; }
+.mov-der b { color: var(--mal); font-weight: 700; font-size: 17px; }
+.mov-der small { color: var(--suave); font-size: 14px; line-height: 1.3; align-self: stretch; text-align: right; overflow-wrap: anywhere; }

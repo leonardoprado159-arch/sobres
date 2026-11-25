@@ -256,29 +256,50 @@ function vistaAjustes() {
 }
 
 // ================= vistas: detalle =================
+function filaMov(g, s) {
+  const m = metodoDe(g.metodo_id), f = new Date(g.fecha);
+  const medio = m ? m.nombre : (g.fuente === 'manual' ? '' : FUENTES[g.fuente]);
+  const otra = g.moneda !== s.moneda ? ` · ${fmt(conv(g.monto, g.moneda, s.moneda), s.moneda)}` : '';
+  return `<button class="mov" data-accion="editar-gasto" data-id="${g.id}">
+    <span class="mov-izq"><b>${esc(g.comercio || 'Gasto')}</b><small>${f.getDate()} ${MESES[f.getMonth()]} ${f.getFullYear()}</small></span>
+    <span class="mov-der"><b>${fmt(g.monto, g.moneda)}</b><small>${esc(medio)}${otra}</small></span></button>`;
+}
+
 function vistaSobre(p) {
   const s = sobreDe(p.id);
   if (!s) { S.pila.pop(); return render(); }
   const c = ciclo(), lista = enCiclo(c).filter(g => g.sobre_id === s.id);
   const g = gastadoSobre(s, lista), e = estadoSobre(s, g);
-  const seg = p.seg || 'mes';
+  const hist = p.seg === 'hist';
   return `
-  ${top(s.nombre, { atras: true, derecha: `<button class="redondo" data-accion="editar-sobre" data-id="${s.id}" aria-label="Editar sobre">${ico('puntos')}</button>` })}
-  <div class="resumen">
-    <small class="${e.cls}" style="font-weight:600;text-transform:capitalize">${e.etiqueta}</small>
-    <div class="grande ${e.cls === 'mal' ? 'mal' : ''}">${fmt(e.monto, s.moneda)}</div>
-    <p>${e.conPres ? `${fmt(g, s.moneda)} gastado de ${fmt(s.presupuesto, s.moneda)}` : 'Este sobre no tiene presupuesto'} · ${nombreCiclo(c.ini)}</p>
-    ${e.conPres ? `<div class="barra ${e.cls === 'mal' ? 'excedido' : ''}"><span style="width:${Math.min(100, e.frac * 100).toFixed(1)}%"></span></div>` : ''}
-    <div class="botones-resumen">
-      <button class="btn chico" data-accion="presupuesto" data-id="${s.id}">${e.conPres ? 'Cambiar presupuesto' : 'Poner presupuesto'}</button>
-      ${e.cls === 'bien' && e.monto > 0 ? `<button class="btn chico" data-accion="sobrante-ahorro" data-id="${s.id}">${ico('alcancia')} Pasar a ahorro</button>` : ''}
-    </div>
+  <header class="top">
+    <button class="redondo" data-accion="atras" aria-label="Volver">${ico('izquierda')}</button>
+    <button class="redondo" data-accion="menu-sobre" data-id="${s.id}" aria-label="Opciones del sobre">${ico('puntos')}</button>
+  </header>
+  <div class="tarjeta-sobre">
+    <h2><span class="ico-sobre ${e.cls === 'mal' ? 'mal' : ''}">${ico(s.icono)}</span>${esc(s.nombre)}</h2>
+    ${e.conPres ? `<p><b>${fmt(s.presupuesto, s.moneda)}</b> presupuestados</p>` : `<p>Sin presupuesto · <button class="enlace" data-accion="presupuesto" data-id="${s.id}">poner uno</button></p>`}
+    <p><b>${fmt(g, s.moneda)}</b> gastados</p>
+    ${e.conPres ? `<div class="saldo"><b class="${e.cls}">${fmt(e.monto, s.moneda)}</b><span>${e.etiqueta === 'sobregiro' ? 'de sobregiro' : 'disponibles'}</span></div>` : ''}
   </div>
-  <div class="segmento" role="tablist">
-    <button class="${seg === 'mes' ? 'activo' : ''}" data-accion="seg" data-seg="mes" role="tab" aria-selected="${seg === 'mes'}">Este mes</button>
-    <button class="${seg === 'hist' ? 'activo' : ''}" data-accion="seg" data-seg="hist" role="tab" aria-selected="${seg === 'hist'}">Historial</button>
+  <div class="cab-mov">
+    <span class="titulo" style="margin:0">${hist ? 'Historial' : 'Últimos movimientos'}</span>
+    <button class="redondo chico" data-accion="seg" data-seg="${hist ? 'mes' : 'hist'}" aria-label="${hist ? 'Ver movimientos' : 'Ver historial'}">${ico(hist ? 'lista' : 'historial')}</button>
   </div>
-  ${seg === 'mes' ? listaPorDia(lista, false) : bloqueHistorial(s)}`;
+  ${hist ? bloqueHistorial(s) : (lista.length
+    ? `<div class="grupo movs">${lista.map(x => filaMov(x, s)).join('')}</div>`
+    : `<div class="vacio">${ico('recibo')}<div>Todavía no hay gastos este mes.</div></div>`)}`;
+}
+
+function abrirMenuSobre(s) {
+  const e = estadoSobre(s, gastadoSobre(s, enCiclo(ciclo())));
+  const capa = document.createElement('div');
+  capa.innerHTML = `<div class="capa-menu" data-accion="cerrar-menu"></div><div class="menu" role="menu">
+    <button role="menuitem" data-accion="presupuesto" data-id="${s.id}">${e.conPres ? 'Cambiar presupuesto' : 'Poner presupuesto'} ${ico('moneda')}</button>
+    ${e.cls === 'bien' && e.monto > 0 ? `<button role="menuitem" data-accion="sobrante-ahorro" data-id="${s.id}">Pasar sobrante a ahorro ${ico('alcancia')}</button>` : ''}
+    <button role="menuitem" data-accion="seg" data-seg="hist">Ver historial ${ico('historial')}</button>
+    <button role="menuitem" data-accion="editar-sobre" data-id="${s.id}">Editar sobre ${ico('pincel')}</button></div>`;
+  capa.id = 'menu'; document.body.appendChild(capa);
 }
 
 const mediana = (xs) => { if (!xs.length) return 0; const a = [...xs].sort((x, y) => x - y), m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
@@ -900,7 +921,7 @@ const ir = (v, extra = {}) => { S.pila.push({ v, ...extra }); render(true); scro
 
 async function accion(el) {
   const a = el.dataset.accion, id = el.dataset.id;
-  if (a !== 'menu') cerrarMenu();
+  if (a !== 'menu' && a !== 'menu-sobre') cerrarMenu();
   switch (a) {
     case 'tab': S.tab = el.dataset.v; S.pila = []; render(true); scrollTo(0, 0); break;
     case 'ir': cerrarHoja(); ir(el.dataset.v); break;
@@ -909,6 +930,7 @@ async function accion(el) {
     case 'cerrar-menu': break;
     case 'abrir-sobre': ir('sobre', { id }); break;
     case 'seg': vistaActual().seg = el.dataset.seg; render(); break;
+    case 'menu-sobre': $('#menu') ? cerrarMenu() : abrirMenuSobre(sobreDe(id)); break;
     case 'nuevo': {
       const v = vistaActual().v;
       if (v === 'ahorros') hojaAhorro(); else if (v === 'suscripciones') hojaSub(); else hojaGasto();
