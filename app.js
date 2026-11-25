@@ -154,6 +154,25 @@ function cobroAnterior(s) {
   if (pasoSem(s)) return new Date(p.getFullYear(), p.getMonth(), p.getDate() - pasoSem(s));
   return s.frecuencia === 'anual' ? new Date(p.getFullYear() - 1, p.getMonth(), p.getDate()) : new Date(p.getFullYear(), p.getMonth() - 1, p.getDate());
 }
+// Los cobros e ingresos automáticos se anotan una sola vez, aunque la app esté abierta en dos teléfonos
+// y aunque después se borren a mano:
+//  - cada uno lleva un id que sale de "qué es + qué día": si otro teléfono ya lo anotó, la base rechaza el repetido;
+//  - en cobrado_hasta / registrado_hasta queda hasta qué fecha ya se anotó, así lo borrado no vuelve a aparecer.
+async function idFijo(clave) {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(clave)));
+  h[6] = (h[6] & 0x0f) | 0x50; h[8] = (h[8] & 0x3f) | 0x80;
+  const x = [...h.slice(0, 16)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
+}
+async function insertarUnico(tabla, fila) {
+  try { return await api.insertar(tabla, fila); }
+  catch (e) { if (e.codigo === '23505' || /duplicate key/i.test(e.message)) return null; throw e; }
+}
+const yaHasta = (hasta, d) => !!hasta && aISO(d) <= hasta;
+async function marcarHasta(tabla, x, campo, d) {
+  const v = aISO(d);
+  if (!x[campo] || x[campo] < v) Object.assign(x, (await api.actualizar(tabla, x.id, { [campo]: v })) || { [campo]: v });
+}
 async function cobrarSuscripciones() {
   const hoy = new Date();
   for (const s of S.subs.filter(x => x.activa)) {
@@ -163,11 +182,16 @@ async function cobrarSuscripciones() {
       const d = anclaDe(s); d.setHours(9);
       const tope = new Date(hoy - 62 * 864e5);
       while (d < tope) d.setDate(d.getDate() + pasoSem(s));
+      let ultima = null;
       for (; d <= hoy; d.setDate(d.getDate() + pasoSem(s))) {
+        ultima = new Date(d);
+        if (yaHasta(s.cobrado_hasta, d)) continue;
         if (S.gastos.some(g => g.nota === marca && new Date(g.fecha).toDateString() === d.toDateString())) continue;
-        S.gastos.push(await api.insertar('gastos', { sobre_id: s.sobre_id, metodo_id: s.metodo_id || null, monto: s.monto, moneda: s.moneda,
-          comercio: s.nombre, fuente: 'suscripcion', fecha: d.toISOString(), nota: marca, estado: s.como_pendiente ? 'pendiente' : 'pagado' }));
+        const f = await insertarUnico('gastos', { id: await idFijo(marca + '|' + aISO(d)), sobre_id: s.sobre_id, metodo_id: s.metodo_id || null, monto: s.monto, moneda: s.moneda,
+          comercio: s.nombre, fuente: 'suscripcion', fecha: d.toISOString(), nota: marca, estado: s.como_pendiente ? 'pendiente' : 'pagado' });
+        if (f) S.gastos.push(f);
       }
+      if (ultima) await marcarHasta('suscripciones', s, 'cobrado_hasta', ultima);
       continue;
     }
     // el cobro de hoy (si ya es el día) o el último que pasó
@@ -176,16 +200,23 @@ async function cobrarSuscripciones() {
     cobro.setHours(9);
     if (cobro > hoy || new Date(s.creado) > cobro) continue;
     if (s.ancla && cobro < deISO(s.ancla)) continue;   // nació de un gasto que ya está anotado
-    if (S.gastos.some(g => g.nota === marca && Math.abs(new Date(g.fecha) - cobro) < 2 * 864e5)) continue;
+    if (yaHasta(s.cobrado_hasta, cobro)) continue;   // ese cobro ya se anotó (aunque después se haya borrado)
+    if (S.gastos.some(g => g.nota === marca && Math.abs(new Date(g.fecha) - cobro) < 2 * 864e5)) { await marcarHasta('suscripciones', s, 'cobrado_hasta', cobro); continue; }
     // tasa cero: una cuota por mes hasta completar; después se apaga sola
     const esCuotas = s.tipo === 'cuotas' && s.cuotas > 0, k = (s.cuotas_hechas || 0) + 1;
     if (esCuotas && k > s.cuotas) { Object.assign(s, await api.actualizar('suscripciones', s.id, { activa: false })); continue; }
-    S.gastos.push(await api.insertar('gastos', {
+    const f = await insertarUnico('gastos', {
+      id: await idFijo(marca + '|' + aISO(cobro)),
       sobre_id: s.sobre_id, metodo_id: s.metodo_id || null, monto: s.monto, moneda: s.moneda,
       comercio: esCuotas ? `${s.nombre} (cuota ${k}/${s.cuotas})` : s.nombre, fuente: 'suscripcion', fecha: cobro.toISOString(), nota: marca,
       estado: s.como_pendiente ? 'pendiente' : 'pagado',
-    }));
-    if (esCuotas) Object.assign(s, await api.actualizar('suscripciones', s.id, { cuotas_hechas: k, activa: k < s.cuotas }));
+    });
+    if (f) {
+      S.gastos.push(f);
+      // la cuenta de cuotas se suma en la base, no se escribe el número que este teléfono cree
+      if (esCuotas) { Object.assign(s, await api.sumar('suscripciones', s.id, 'cuotas_hechas', 1, s.cuotas_hechas || 0)); s.activa = (s.cuotas_hechas || 0) < s.cuotas; }
+    }
+    await marcarHasta('suscripciones', s, 'cobrado_hasta', cobro);
   }
   S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
 }
@@ -258,10 +289,15 @@ function fechasFijo(f, hasta = new Date()) {
 async function registrarFijos() {
   for (const f of S.fijos.filter(x => x.activo)) {
     const marca = 'fijo:' + f.id;
+    let ultima = null;
     for (const d of fechasFijo(f)) {
+      if (!ultima || d > ultima) ultima = d;
+      if (yaHasta(f.registrado_hasta, d)) continue;
       if (S.ingresos.some(i => i.nota === marca && new Date(i.fecha).toDateString() === d.toDateString())) continue;
-      S.ingresos.push(await api.insertar('ingresos', { monto: f.monto, moneda: f.moneda, origen: f.nombre, fuente: 'fijo', fecha: d.toISOString(), nota: marca }));
+      const fila = await insertarUnico('ingresos', { id: await idFijo(marca + '|' + aISO(d)), monto: f.monto, moneda: f.moneda, origen: f.nombre, fuente: 'fijo', fecha: d.toISOString(), nota: marca });
+      if (fila) S.ingresos.push(fila);
     }
+    if (ultima) await marcarHasta('ingresos_fijos', f, 'registrado_hasta', ultima);
   }
   S.ingresos.sort((a, b) => b.fecha.localeCompare(a.fecha));
 }
@@ -331,7 +367,8 @@ function vistaInicio() {
   const c = ciclo(), b = balance(c), mv = b.mv;
   const pct = b.ing > 0 ? Math.max(0, Math.min(1, b.disp / b.ing)) : 0;
   const pendientes = S.gastos.filter(g => porClasificar(g) && new Date(g.fecha) >= c.ini).length;
-  const prox = S.subs.filter(s => s.activa).map(s => ({ s, d: Math.round((proximoCobro(s) - new Date().setHours(0, 0, 0, 0)) / 864e5) })).filter(x => x.d <= 2);
+  const sigCobro = (s) => { let p = proximoCobro(s); if (yaHasta(s.cobrado_hasta, p)) p = proximoCobro(s, new Date(p.getFullYear(), p.getMonth(), p.getDate() + 1)); return p; };   // el de hoy ya anotado no se anuncia
+  const prox = S.subs.filter(s => s.activa).map(s => ({ s, d: Math.round((sigCobro(s) - new Date().setHours(0, 0, 0, 0)) / 864e5) })).filter(x => x.d <= 2);
   let seguro;
   if (!b.hayIngresos) {
     seguro = `<button class="tarjeta-seguro vacia" data-accion="nuevo-ingreso">
@@ -777,7 +814,7 @@ function hojaRepartir(ing) {
     const l = leer();
     for (const { a, n } of l) {
       S.gastos.push(await api.insertar('gastos', { sobre_id: null, monto: n, moneda: a.moneda, comercio: 'Ahorro: ' + a.nombre, fuente: 'ahorro', fecha: new Date().toISOString(), nota: 'ahorro:' + a.id }));
-      Object.assign(a, await api.actualizar('ahorros', a.id, { ahorrado: Math.round((Number(a.ahorrado) + n) * 100) / 100 }));
+      Object.assign(a, await api.sumar('ahorros', a.id, 'ahorrado', n, a.ahorrado));
     }
     S.gastos.sort((x, y) => y.fecha.localeCompare(x.fecha));
     cerrarHoja(); render(); toast(l.length ? `Apartado para ${l.length} ${l.length === 1 ? 'meta' : 'metas'}` : 'No se apartó nada');
@@ -1409,7 +1446,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 21`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 22`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1694,7 +1731,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 21</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 22</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -2079,6 +2116,7 @@ async function pasarACuotas(g, n) {
   const sub = await api.insertar('suscripciones', {
     nombre, tipo: 'cuotas', monto: cuota, moneda: g.moneda, frecuencia: 'mensual', dia_cobro: new Date(g.fecha).getDate(), mes_cobro: null,
     cuotas: n, cuotas_hechas: 1, como_pendiente: false, sobre_id: g.sobre_id || null, metodo_id: g.metodo_id || null, activa: true,
+    cobrado_hasta: aISO(new Date(g.fecha)),   // la cuota 1 es este gasto: no se cobra ni se anuncia otra vez
   });
   S.subs.push(sub);
   Object.assign(g, await api.actualizar('gastos', g.id, { monto: cuota, comercio: `${nombre} (cuota 1/${n})`, nota: 'sub:' + sub.id }));
@@ -2150,7 +2188,7 @@ function hojaPasarAhorro(s) {
       fecha: new Date().toISOString(), nota: 'ahorro:' + a.id,
     }));
     S.gastos.sort((x, y) => y.fecha.localeCompare(x.fecha));
-    Object.assign(a, await api.actualizar('ahorros', a.id, { ahorrado: Math.round((Number(a.ahorrado) + conv(monto, s.moneda, a.moneda)) * 100) / 100 }));
+    Object.assign(a, await api.sumar('ahorros', a.id, 'ahorrado', Math.round(conv(monto, s.moneda, a.moneda) * 100) / 100, a.ahorrado));
     cerrarHoja(); render(); toast(`${fmt(monto, s.moneda)} pasados a ${a.nombre}`);
   });
 }
@@ -2171,7 +2209,7 @@ function hojaMoverAhorro(a) {
     const monto = leerMontoCampo(f.monto.value);
     if (!monto) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
     const nuevo = Math.max(0, Number(a.ahorrado) + monto * Number(valorRadio(f, 'tipo')));
-    Object.assign(a, await api.actualizar('ahorros', a.id, { ahorrado: nuevo }));
+    Object.assign(a, await api.sumar('ahorros', a.id, 'ahorrado', nuevo - Number(a.ahorrado), a.ahorrado));
     cerrarHoja(); render(); toast('Ahorro actualizado');
   });
 }
@@ -2663,7 +2701,7 @@ async function accion(el) {
       { // si era plata apartada para una meta de ahorro, la meta baja en ese monto
         const g = S.gastos.find(x => x.id === id), a = g && /^ahorro:/.test(g.nota || '') ? S.ahorros.find(x => x.id === g.nota.slice(7)) : null;
         await api.borrar('gastos', id); S.gastos = S.gastos.filter(x => x.id !== id);
-        if (a) Object.assign(a, await api.actualizar('ahorros', a.id, { ahorrado: Math.max(0, Math.round((Number(a.ahorrado) - conv(g.monto, g.moneda, a.moneda)) * 100) / 100) }));
+        if (a) Object.assign(a, await api.sumar('ahorros', a.id, 'ahorrado', -Math.round(conv(g.monto, g.moneda, a.moneda) * 100) / 100, a.ahorrado));
         cerrarHoja(); render(); toast(a ? `Gasto borrado · ${a.nombre} bajó ${fmt(conv(g.monto, g.moneda, a.moneda), a.moneda)}` : 'Gasto borrado');
       }
       break;

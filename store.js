@@ -47,7 +47,15 @@ const backendDemo = {
     if (tabla === 'reglas_comercio') {
       demo()[tabla] = demo()[tabla].filter(r => r.comercio !== f.comercio);
     }
+    if (fila.id && demo()[tabla].some(r => r.id === fila.id)) { const e = new Error('duplicate key'); e.codigo = '23505'; throw e; }
     demo()[tabla].push(f); persistir(); return structuredClone(f);
+  },
+  async sumar(tabla, id, campo, delta) {
+    const f = demo()[tabla].find(r => r.id === id);
+    if (!f) return undefined;
+    f[campo] = Math.max(0, Math.round(((Number(f[campo]) || 0) + delta) * 100) / 100);
+    if (tabla === 'suscripciones' && f.tipo === 'cuotas' && f.cuotas > 0) f.activa = f[campo] < f.cuotas;
+    persistir(); return structuredClone(f);
   },
   async actualizar(tabla, id, cambios, campo = 'id') {
     const f = demo()[tabla].find(r => r[campo] === id);
@@ -82,6 +90,8 @@ function backendSupabase() {
       return chk(await sb.from(o.tabla).insert(o.fila).select().single());
     }
     if (o.op === 'actualizar') return chk(await sb.from(o.tabla).update(o.cambios).eq(o.campo, o.id).select())[0];
+    // suma hecha en la base: no pisa lo que otro teléfono haya sumado mientras tanto
+    if (o.op === 'sumar') return (chk(await sb.rpc(o.tabla === 'ahorros' ? 'sumar_ahorro' : 'sumar_cuota', { p_id: o.id, p_delta: o.delta })) || [])[0];
     chk(await sb.from(o.tabla).delete().eq('id', o.id));
   };
   // Sube lo pendiente en orden. Se detiene si no hay señal, si no hay sesión válida o si el servidor falla
@@ -174,6 +184,10 @@ function backendSupabase() {
       return conCola({ op: 'actualizar', tabla, id, cambios, campo }, () => ({ ...cambios }));
     },
     async borrar(tabla, id) { await conCola({ op: 'borrar', tabla, id }, () => undefined); },
+    // suma delta a un campo; "actual" es lo que se ve en el teléfono, para mostrar algo si no hay señal
+    async sumar(tabla, id, campo, delta, actual = 0) {
+      return conCola({ op: 'sumar', tabla, id, delta }, () => ({ [campo]: Math.max(0, Math.round(((Number(actual) || 0) + delta) * 100) / 100) }));
+    },
     sincronizar, pendientes: () => leerCola().length, vaciarCola: () => guardarCola([]), alEncolar: null,
     atascado: () => (leerCola()[0]?.n || 0) >= 5,   // el primero de la fila ya falló 5 veces por algo que no es la señal
     urlFuncion: CFG.url.replace(/\/$/, '') + '/functions/v1/registrar',
