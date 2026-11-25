@@ -422,7 +422,7 @@ function vistaApplePay() {
   <div style="height:12px"></div>
   <div class="campos"><label class="campo"><span style="color:var(--tinta)">Recordar el sobre de cada comercio</span>
     <span class="interruptor"><input type="checkbox" data-cfg-bool="atajo_recordar" ${S.cfg.atajo_recordar ? 'checked' : ''}><span></span></span></label></div>
-  <p class="nota">${id ? 'Todo lo que pagués con Apple Pay cae en este sobre.' : 'El pago se registra solo. Si la app ya conoce el comercio o la tarjeta tiene sobre propio, cae ahí; si no, queda en "Sin sobre" para que lo asignés con un toque, y la próxima vez ese comercio entra solo.'}</p>
+  <p class="nota">${id ? 'Todo lo que pagués con Apple Pay cae en este sobre.' : 'El pago se registra solo. Si la app ya conoce el comercio o la tarjeta tiene sobre propio, cae ahí; si no, queda en "Sin sobre". Para que te pregunte el sobre en el momento de pagar, seguí los pasos de más abajo.'}</p>
   <div class="titulo" style="margin-top:26px">Configurar el atajo (una sola vez)</div>
   ${datosAtajo()}
   ${estadoAtajo()}
@@ -434,10 +434,17 @@ function vistaApplePay() {
     <div class="paso"><b>Cuatro campos de texto</b>Con "Agregar campo nuevo → Texto":<br><code>token</code> → pegá tu Token<br><code>monto</code> → tocá el valor, elegí Entrada del atajo → Importe<br><code>comercio</code> → Entrada del atajo → Comercio<br><code>tarjeta</code> → Entrada del atajo → Tarjeta o pase</div>
     <div class="paso"><b>Listo</b>Tocá OK. La fecha la pone la app sola. Al pagar, el gasto aparece en su sobre o en "Sin sobre".</div>
   </div>
-  <div class="titulo" style="margin-top:26px">Opcional</div>
+  <div class="titulo" style="margin-top:26px">Que pregunte el sobre al pagar</div>
+  <p class="nota" style="margin:0 4px 12px">El pago se guarda de una vez y enseguida te sale la lista de sobres, con el sugerido de primero. Si no elegís nada, el gasto queda guardado sin sobre.</p>
   <div class="pasos">
-    <div class="paso"><b>Ver un aviso al pagar</b>Después de la acción agregá <code>Obtener valor del diccionario</code> con la clave <code>mensaje</code> y luego <code>Mostrar notificación</code>. Te dice el sobre y cuánto queda.</div>
-    <div class="paso"><b>Que pregunte el sobre</b>Agregá al cuerpo el campo <code>preguntar</code> = 1. La respuesta trae <code>opciones</code>: usá <code>Elegir de la lista</code> y repetí la acción agregando <code>sobre</code> = Elemento seleccionado.</div>
+    <div class="paso"><b>Un campo más</b>En la acción que ya tenés, agregá un quinto campo de texto: <code>preguntar</code> con el valor <code>1</code>.</div>
+    <div class="paso"><b>Sacar la lista</b>Debajo agregá la acción <code>Obtener valor del diccionario</code>. Dejala en "Valor", y en Clave escribí <code>opciones</code>.</div>
+    <div class="paso"><b>Mostrar la lista</b>Agregá la acción <code>Seleccionar de la lista</code>. Se conecta sola con el paso anterior.</div>
+    <div class="paso"><b>Mandar el sobre elegido</b>Agregá otra <code>Obtener contenido de URL</code> con la misma Dirección, Método <code>POST</code> y dos campos de texto: <code>token</code> → tu Token, y <code>sobre</code> → Elemento seleccionado.</div>
+  </div>
+  <div class="titulo" style="margin-top:26px">Opcional: ver un aviso</div>
+  <div class="pasos">
+    <div class="paso"><b>Notificación con el resultado</b>Al final agregá <code>Obtener valor del diccionario</code> con la clave <code>mensaje</code> y luego <code>Mostrar notificación</code>. Te dice el sobre y cuánto queda.</div>
   </div>`;
 }
 
