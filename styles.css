@@ -624,3 +624,34 @@ button.est-fila { width: 100%; text-align: left; }
 button.cajon-cab { width: 100%; text-align: left; }
 .cajon .fila.cfg { padding: 10px 10px; min-height: 60px; }
 .cajon .fila.cfg .txt b { font-weight: 600; font-size: 17px; }
+
+/* ---------- cuentas, avisos de límite y resumen ---------- */
+.tira-cuentas { display: flex; align-items: center; gap: 18px; width: 100%; text-align: left; background: var(--carta); border-radius: 22px; padding: 14px 16px 14px 20px; margin-top: 12px; }
+.tira-cuentas > span { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.tira-cuentas small { color: var(--suave); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tira-cuentas b { font-size: 17px; font-weight: 700; white-space: nowrap; }
+.tira-cuentas > .fin { color: var(--tenue); width: 18px; height: 18px; flex: none; }
+.movu .monto { display: flex; flex-direction: column; align-items: flex-end; }
+.movu .monto small { color: var(--suave); font-size: 13px; font-weight: 500; }
+.movu .monto.neutro { color: var(--suave); }
+.movu .monto.mal, .destacada b.mal, .tira-cuentas b.mal { color: var(--mal); }
+.movu .monto.bien { color: var(--bien); }
+.item.alerta.pasada { background: color-mix(in srgb, var(--mal) 11%, var(--carta)); }
+.item.alerta > .fin { color: var(--tenue); width: 18px; height: 18px; flex: none; }
+.nav-res { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; }
+.nav-res b { font-size: 17px; font-weight: 600; text-align: center; flex: 1; }
+.nav-res button:disabled { opacity: .3; }
+.fila-res { cursor: default; }
+.barra-res { display: block; height: 6px; border-radius: 99px; background: var(--carta-2); margin-top: 7px; overflow: hidden; }
+.barra-res i { display: block; height: 100%; border-radius: 99px; background: var(--s1); }
+.frase-res { font-size: 15px; margin-top: 12px; }
+.acciones .btn .i { width: 20px; height: 20px; vertical-align: -4px; margin-right: 4px; }
+
+/* ---------- fluidez ---------- */
+.btn.cargando { position: relative; color: transparent !important; pointer-events: none; }
+.btn.cargando::after { content: ''; position: absolute; inset: 0; margin: auto; width: 20px; height: 20px; border-radius: 50%;
+  border: 2.5px solid var(--fondo); border-right-color: transparent; animation: gira .7s linear infinite; }
+@keyframes gira { to { transform: rotate(360deg); } }
+/* las filas que no están en pantalla no se dibujan hasta que hace falta */
+.movu { content-visibility: auto; contain-intrinsic-size: auto 70px; }
+button, a, label, select { touch-action: manipulation; }

@@ -8,7 +8,7 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) 
 
 // ---------- Demo (localStorage) ----------
 const CLAVE = 'sobres-demo-v2';
-export const TABLAS = ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos'];
+export const TABLAS = ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos', 'traslados'];
 function leerDemo() {
   try { return JSON.parse(localStorage.getItem(CLAVE)) || null; } catch { return null; }
 }
@@ -64,8 +64,9 @@ function backendSupabase() {
     },
     async salir() { await sb.auth.signOut(); },
     async listar(tabla) {
-      let q = sb.from(tabla).select('*');
-      if (tabla === 'gastos' || tabla === 'ingresos') {
+      // de los gastos no se baja el texto original del aviso del banco: pesa y la app no lo muestra
+      let q = sb.from(tabla).select(tabla === 'gastos' ? 'id,user_id,sobre_id,metodo_id,monto,moneda,comercio,tarjeta,fuente,fecha,nota,creado,referencia,estado' : '*');
+      if (tabla === 'gastos' || tabla === 'ingresos' || tabla === 'traslados') {
         const desde = new Date(); desde.setMonth(desde.getMonth() - 14);
         q = q.gte('fecha', desde.toISOString()).order('fecha', { ascending: false });
       }
