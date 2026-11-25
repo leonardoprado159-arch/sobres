@@ -56,7 +56,7 @@ const decimalesFaltan = (v) => { const i = v.indexOf(','); return !v ? '' : i < 
 // ================= estado =================
 const S = {
   cfg: null, sobres: [], metodos: [], gastos: [], reglas: [], subs: [], ahorros: [], usuario: null,
-  ingresos: [], fijos: [], mov: { filtro: 'todo', q: '' },
+  ingresos: [], fijos: [], mov: { filtro: 'todo', q: '' }, est: { d: 0, sel: 5 },
   tab: 'inicio', pila: [],
 };
 const vistaActual = () => S.pila[S.pila.length - 1] || { v: S.tab };
@@ -195,11 +195,13 @@ const conSigno = (n, moneda, s) => (Math.abs(n) < 0.005 ? '' : s) + fmt(Math.abs
 function balance(c = ciclo()) {
   const mv = S.cfg.moneda_vista, gastos = enCiclo(c), ingresos = enCicloI(c);
   const ing = ingresos.reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0);
-  const gas = gastos.reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
+  const pagado = (g) => (g.estado || 'pagado') === 'pagado';
+  const gas = gastos.filter(pagado).reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
+  const porPagar = gastos.filter(g => !pagado(g)).reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
   const reservado = S.sobres.filter(s => s.presupuesto > 0)
     .reduce((a, s) => a + conv(Math.max(0, s.presupuesto - gastadoSobre(s, gastos)), s.moneda, mv), 0);
   const disp = ing - gas;
-  return { mv, ing, gas, disp, reservado, seguro: disp - reservado, dias: Math.max(1, diasParaCierre()), hayIngresos: ingresos.length > 0 };
+  return { mv, ing, gas, disp, reservado, porPagar, seguro: disp - porPagar - reservado, dias: Math.max(1, diasParaCierre()), hayIngresos: ingresos.length > 0 };
 }
 
 // Ingresos fijos (salario): fechas de pago de este mes y del anterior que ya pasaron
@@ -236,8 +238,8 @@ function proximoFijo(f) {
 // Gastos e ingresos en una sola lista
 function movimientos({ filtro = 'todo', q = '', c = null } = {}) {
   let l = [];
-  if (filtro !== 'ingresos') l = l.concat(S.gastos.map(g => ({ t: 'g', x: g, f: g.fecha })));
-  if (filtro !== 'gastos') l = l.concat(S.ingresos.map(i => ({ t: 'i', x: i, f: i.fecha })));
+  if (filtro !== 'ingresos') l = l.concat(S.gastos.filter(g => filtro !== 'pend' || (g.estado || 'pagado') !== 'pagado').map(g => ({ t: 'g', x: g, f: g.fecha })));
+  if (filtro !== 'gastos' && filtro !== 'pend') l = l.concat(S.ingresos.map(i => ({ t: 'i', x: i, f: i.fecha })));
   if (c) l = l.filter(m => { const f = new Date(m.f); return f >= c.ini && f < c.fin; });
   const k = q.trim().toLowerCase();
   if (k) l = l.filter(m => [m.x.comercio, m.x.origen, /^(sub|ahorro|fijo):/.test(m.x.nota || '') ? '' : m.x.nota, sobreDe(m.x.sobre_id)?.nombre, metodoDe(m.x.metodo_id)?.nombre]
@@ -254,9 +256,10 @@ function filaMovU(m) {
       <span class="monto bien">+${fmt(x.monto, x.moneda)}</span></button>`;
   }
   const s = sobreDe(x.sobre_id);
-  return `<button class="movu" data-accion="editar-gasto" data-id="${x.id}">
+  const est = x.estado && x.estado !== 'pagado' ? x.estado : '';
+  return `<button class="movu ${est ? 'por-pagar' : ''}" data-accion="editar-gasto" data-id="${x.id}">
     <span class="tile">${ico(s ? s.icono : 'bandeja')}</span>
-    <span class="txt"><b>${esc(x.comercio || 'Gasto')}</b><small>${s ? esc(s.nombre) : '<em>Sin sobre</em>'}</small></span>
+    <span class="txt"><b>${esc(x.comercio || 'Gasto')}${est ? `<i class="marca-est ${est}" title="${est}"></i>` : ''}</b><small>${est ? (est === 'pendiente' ? 'Pendiente · ' : 'Planeado · ') : ''}${s ? esc(s.nombre) : '<em>Sin sobre</em>'}</small></span>
     <span class="monto">−${fmt(x.monto, x.moneda)}</span></button>`;
 }
 function listaMovs(l, vacio = 'Todavía no hay movimientos.') {
@@ -289,7 +292,7 @@ function vistaInicio() {
     seguro = `<section class="tarjeta-seguro">
       <div class="ts-top"><span class="tile ing">${ico('efectivo')}</span><b>Seguro para gastar</b></div>
       <div class="ts-monto bien">${fmt(b.seguro, mv)}</div>
-      <p>${fmt(b.seguro / b.dias, mv)} / día · ${b.dias} ${b.dias === 1 ? 'día restante' : 'días restantes'}${b.reservado > 0 ? `<br>${fmt(b.reservado, mv)} reservados en tus sobres` : ''}</p></section>`;
+      <p>${fmt(b.seguro / b.dias, mv)} / día · ${b.dias} ${b.dias === 1 ? 'día restante' : 'días restantes'}${b.reservado > 0 ? `<br>${fmt(b.reservado, mv)} reservados en tus sobres` : ''}${b.porPagar > 0 ? `<br>${fmt(b.porPagar, mv)} por pagar` : ''}</p></section>`;
   } else {
     seguro = `<section class="tarjeta-seguro deficit">
       <div class="ts-top"><span class="tile mal">${ico('info')}</span><b>Déficit del período</b></div>
@@ -321,7 +324,7 @@ function vistaInicio() {
   ${listaMovs(movimientos({ c }).slice(0, 25))}`;
 }
 
-const FILTROS_MOV = [['todo', 'Todo'], ['gastos', 'Gastos'], ['ingresos', 'Ingresos']];
+const FILTROS_MOV = [['todo', 'Todo'], ['gastos', 'Gastos'], ['ingresos', 'Ingresos'], ['pend', 'Por pagar']];
 function resMovs() {
   const l = movimientos(S.mov), mv = S.cfg.moneda_vista;
   const neto = l.reduce((a, m) => a + (m.t === 'i' ? 1 : -1) * conv(m.x.monto, m.x.moneda, mv), 0);
@@ -335,7 +338,7 @@ function vistaMovs() {
   const f = S.mov;
   return `${top('Movimientos', { derecha: `<button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>` })}
   <label class="buscador">${ico('buscar')}<input type="search" data-buscar placeholder="Buscar comercio, sobre o nota" value="${esc(f.q)}" aria-label="Buscar movimientos" autocomplete="off"></label>
-  <div class="segmento desliza" id="seg-mov" style="--n:3;--i:${FILTROS_MOV.findIndex(x => x[0] === f.filtro)}" role="tablist"><span class="pill"></span>
+  <div class="segmento desliza" id="seg-mov" style="--n:${FILTROS_MOV.length};--i:${FILTROS_MOV.findIndex(x => x[0] === f.filtro)}" role="tablist"><span class="pill"></span>
     ${FILTROS_MOV.map(([k, t]) => `<button class="${f.filtro === k ? 'activo' : ''}" data-accion="filtro-mov" data-valor="${k}" role="tab" aria-selected="${f.filtro === k}">${t}</button>`).join('')}</div>
   <div id="res-movs">${resMovs()}</div>`;
 }
@@ -467,6 +470,100 @@ function hojaFijo(x = null) {
     await registrarFijos();
     cerrarHoja(); render(); toast('Ingreso fijo guardado');
   });
+}
+
+// ================= estadísticas =================
+// Los colores siguen al sobre (su posición en la lista), no a su puesto en el ranking.
+// Hay 8 colores validados; si hay más sobres, del octavo en adelante se agrupan en "Otros".
+const MAX_SERIES = 8;
+function colorDeSobre(i) {
+  if (S.sobres.length <= MAX_SERIES) return `var(--s${i + 1})`;
+  return i < MAX_SERIES - 1 ? `var(--s${i + 1})` : null;
+}
+
+function datosEst(d) {
+  const c = ciclo(d), mv = S.cfg.moneda_vista, lista = enCiclo(c);
+  const val = (g) => conv(g.monto, g.moneda, mv);
+  const filas = []; let otros = 0;
+  S.sobres.forEach((s, i) => {
+    const v = lista.filter(g => g.sobre_id === s.id).reduce((a, g) => a + val(g), 0);
+    if (v <= 0) return;
+    const color = colorDeSobre(i);
+    if (color) filas.push({ nombre: s.nombre, icono: s.icono, v, color }); else otros += v;
+  });
+  if (otros > 0) filas.push({ nombre: 'Otros sobres', icono: 'lista', v: otros, color: 'var(--s-otros)' });
+  const sin = lista.filter(g => !sobreDe(g.sobre_id)).reduce((a, g) => a + val(g), 0);
+  if (sin > 0) filas.push({ nombre: 'Sin sobre', icono: 'bandeja', v: sin, color: 'var(--s-sin)' });
+  filas.sort((a, b) => b.v - a.v);
+  const total = filas.reduce((a, f) => a + f.v, 0);
+
+  const meses = [];
+  for (let k = -5; k <= 0; k++) {
+    const cc = ciclo(d + k);
+    meses.push({
+      ini: cc.ini,
+      ing: enCicloI(cc).reduce((a, i) => a + conv(i.monto, i.moneda, mv), 0),
+      gas: enCiclo(cc).reduce((a, g) => a + val(g), 0),
+    });
+  }
+  const porComercio = new Map();
+  for (const g of lista) {
+    if (!g.comercio || g.fuente === 'ahorro') continue;
+    const k = normalizarComercio(g.comercio);
+    const e = porComercio.get(k) || { nombre: g.comercio, v: 0, n: 0 };
+    e.v += val(g); e.n++; porComercio.set(k, e);
+  }
+  const comercios = [...porComercio.values()].sort((a, b) => b.v - a.v).slice(0, 5);
+  return { c, mv, filas, total, meses, comercios };
+}
+
+function detalleMes(m, mv) {
+  const neto = m.ing - m.gas;
+  return `<b style="text-transform:capitalize">${nombreCiclo(m.ini)}</b>
+    <span><i class="punto" style="background:var(--s-ing)"></i>Ingresos ${fmt(m.ing, mv)}</span>
+    <span><i class="punto" style="background:var(--s-gas)"></i>Gastos ${fmt(m.gas, mv)}</span>
+    <span class="neto">${neto >= 0 ? 'Quedó' : 'Faltó'} ${fmt(Math.abs(neto), mv)}</span>`;
+}
+
+function vistaEst() {
+  const d = S.est.d, e = datosEst(d), mv = e.mv;
+  const max = Math.max(1, ...e.meses.flatMap(m => [m.ing, m.gas]));
+  const sel = Math.min(5, Math.max(0, S.est.sel ?? 5));
+  return `${top('Análisis', { derecha: `<button class="redondo" data-accion="panel" aria-label="Configuración">${ico('usuario')}</button>` })}
+  <div class="nav-per">
+    <button class="ic-btn" data-accion="est-mover" data-d="-1" aria-label="Mes anterior">${ico('izquierda')}</button>
+    <b>${nombreCiclo(e.c.ini)}</b>
+    <button class="ic-btn" data-accion="est-mover" data-d="1" aria-label="Mes siguiente" ${d >= 0 ? 'disabled' : ''}>${ico('derecha')}</button>
+  </div>
+
+  <h3 class="h-est">Gastos por sobre</h3>
+  ${e.filas.length ? `<section class="tarjeta-est">
+    <div class="est-total"><small>Total gastado</small><b>${fmt(e.total, mv)}</b></div>
+    <div class="tira" role="img" aria-label="Reparto del gasto por sobre">${e.filas.map(f => `<span style="flex:${(f.v / e.total).toFixed(4)};background:${f.color}" title="${esc(f.nombre)}: ${fmt(f.v, mv)}"></span>`).join('')}</div>
+    <div class="est-lista">
+      ${e.filas.map(f => `<div class="est-fila">
+        <i class="punto" style="background:${f.color}"></i>
+        <span class="n">${esc(f.nombre)}</span>
+        <span class="p">${Math.round(f.v / e.total * 100)}%</span>
+        <span class="v">${fmt(f.v, mv)}</span>
+      </div>`).join('')}
+    </div></section>`
+    : `<div class="vacio">${ico('barras')}<div>No hay gastos en este período.</div></div>`}
+
+  <h3 class="h-est">Ingresos y gastos</h3>
+  <section class="tarjeta-est">
+    <div class="leyenda"><span><i class="punto" style="background:var(--s-ing)"></i>Ingresos</span><span><i class="punto" style="background:var(--s-gas)"></i>Gastos</span></div>
+    <div class="grupos" role="group" aria-label="Ingresos y gastos de los últimos seis meses">
+      ${e.meses.map((m, k) => `<button class="grupo-mes ${k === sel ? 'sel' : ''}" data-accion="est-mes" data-k="${k}" aria-pressed="${k === sel}"
+          aria-label="${nombreCiclo(m.ini)}: ingresos ${fmt(m.ing, mv)}, gastos ${fmt(m.gas, mv)}">
+        <span class="barras2"><span class="b ing" style="height:${(m.ing / max * 100).toFixed(1)}%"></span><span class="b gas" style="height:${(m.gas / max * 100).toFixed(1)}%"></span></span>
+        <i>${MESES[m.ini.getMonth()]}</i></button>`).join('')}
+    </div>
+    <div class="detalle-mes" id="det-mes" aria-live="polite">${detalleMes(e.meses[sel], mv)}</div>
+  </section>
+
+  ${e.comercios.length ? `<h3 class="h-est">Dónde más gastaste</h3>
+  <div class="grupo sin-icono">${e.comercios.map(x => `<div class="fila"><span class="txt"><b>${esc(x.nombre)}</b><small>${x.n} ${x.n === 1 ? 'compra' : 'compras'}</small></span><span class="lado">${fmt(x.v, mv)}</span></div>`).join('')}</div>` : ''}`;
 }
 
 function vistaSobres() {
@@ -795,13 +892,13 @@ const vistaAcerca = () => `${top('Acerca de', { atras: true })}
 
 // ================= render =================
 const VISTAS = {
-  inicio: vistaInicio, sobres: vistaSobres, ahorros: vistaAhorros, movs: vistaMovs,
+  inicio: vistaInicio, sobres: vistaSobres, ahorros: vistaAhorros, movs: vistaMovs, est: vistaEst,
   suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos,
   sobre: vistaSobre, movimientos: vistaMovimientos, sinsobre: vistaSinSobre, historial: vistaHistorialGeneral,
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
   avisos: vistaAvisos, personalizacion: vistaPersonalizacion, acerca: vistaAcerca, descargas: vistaDescargas,
 };
-const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Sobres'], ['ahorros', 'alcancia', 'Ahorros'], ['movs', 'buscar', 'Movimientos']];
+const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Sobres'], ['ahorros', 'alcancia', 'Ahorros'], ['est', 'barras', 'Análisis'], ['movs', 'buscar', 'Buscar']];
 
 function render(animar = false) {
   const v = vistaActual();
@@ -887,6 +984,8 @@ function hojaGasto(g = null, pre = {}) {
     ${S.metodos.length ? `<div class="etiqueta">Método de pago</div><div class="chips" role="radiogroup">
       <label><input type="radio" name="metodo" value="" ${!base.metodo_id ? 'checked' : ''}><span>Ninguno</span></label>
       ${S.metodos.map(m => `<label><input type="radio" name="metodo" value="${m.id}" ${base.metodo_id === m.id ? 'checked' : ''}><span>${ico(tipoMetodo(m)[1])}${esc(m.nombre)}</span></label>`).join('')}</div>` : ''}
+    <div class="etiqueta">Estado</div><div class="chips" role="radiogroup">
+      ${[['pagado', 'Pagado'], ['pendiente', 'Pendiente'], ['planeado', 'Planeado']].map(([k, n]) => `<label><input type="radio" name="estado" value="${k}" ${(base.estado || 'pagado') === k ? 'checked' : ''}><span>${k === 'pagado' ? '' : `<i class="marca-est ${k}" style="margin:0"></i>`}${n}</span></label>`).join('')}</div>
     <div class="campos" style="margin-top:14px">
       <label class="campo"><span>Comercio</span><input name="comercio" value="${esc(base.comercio || '')}" placeholder="Opcional" list="comercios" autocomplete="off"></label>
       <label class="campo"><span>Fecha</span><input type="datetime-local" name="fecha" value="${local}"></label>
@@ -914,7 +1013,7 @@ function hojaGasto(g = null, pre = {}) {
     if (!monto) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
     const fila = {
       monto, moneda: valorRadio(f, 'moneda'), comercio: f.comercio.value.trim() || null,
-      sobre_id: valorRadio(f, 'sobre') || null, metodo_id: valorRadio(f, 'metodo') || null,
+      sobre_id: valorRadio(f, 'sobre') || null, metodo_id: valorRadio(f, 'metodo') || null, estado: valorRadio(f, 'estado') || 'pagado',
       fecha: new Date(f.fecha.value || Date.now()).toISOString(),
     };
     if (!g || !/^(sub|ahorro):/.test(g.nota || '')) fila.nota = f.nota.value.trim() || null;
@@ -1229,7 +1328,7 @@ async function descargarExcel() {
       'Fecha': new Date(g.fecha), 'Comercio': g.comercio || '', 'Monto': Number(g.monto), 'Moneda': g.moneda,
       'Monto en moneda del sobre': s ? Math.round(conv(g.monto, g.moneda, s.moneda) * 100) / 100 : null,
       'Sobre': s?.nombre || 'Sin sobre', 'Método de pago': metodoDe(g.metodo_id)?.nombre || '', 'Tarjeta': g.tarjeta || '',
-      'Origen': FUENTES[g.fuente] || g.fuente, 'Nota': /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '',
+      'Origen': FUENTES[g.fuente] || g.fuente, 'Estado': g.estado || 'pagado', 'Nota': /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '',
     };
   }), [18, 26, 12, 8, 14, 18, 16, 8, 14, 24]);
   hoja('Ingresos', S.ingresos.filter(i => { const f = new Date(i.fecha); return f >= r.desde && f <= r.hasta; }).map(i => ({
@@ -1314,6 +1413,8 @@ async function accion(el) {
   switch (a) {
     case 'tab': S.tab = el.dataset.v; S.pila = []; render(true); scrollTo(0, 0); break;
     case 'panel': abrirPanel(); break;
+    case 'est-mover': S.est.d = Math.min(0, S.est.d + Number(el.dataset.d)); S.est.sel = 5; render(); break;
+    case 'est-mes': S.est.sel = Number(el.dataset.k); render(); break;
     case 'cerrar-panel': cerrarPanel(); break;
     case 'nuevo-ingreso': hojaIngreso(); break;
     case 'editar-ingreso': hojaIngreso(S.ingresos.find(i => i.id === id)); break;
