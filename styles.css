@@ -669,3 +669,6 @@ button, a, label, select { touch-action: manipulation; }
 .mini-cuenta b { font-size: 18px; font-weight: 700; white-space: nowrap; margin-top: 4px; }
 .mini-cuenta b.mal { color: var(--mal); }
 .mini-cuenta small { color: var(--tenue); font-size: 13px; }
+.mini-cuenta.nueva { flex: 0 0 96px; align-items: center; justify-content: center; background: transparent; border: 1.5px dashed var(--linea); color: var(--suave); }
+.mini-cuenta.nueva .i { width: 22px; height: 22px; }
+.mini-cuenta.nueva small { color: var(--suave); }

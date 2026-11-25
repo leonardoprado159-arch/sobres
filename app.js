@@ -469,14 +469,15 @@ function vistaCuentas() {
       <span class="tile">${ico(tipoMetodo(c.m)[1])}</span>
       <span class="txt"><b>${esc(c.m.nombre)}</b><small>${tipoMetodo(c.m)[0]}${pr && pr.id === c.m.id ? ' · recibe tus ingresos' : ''}</small></span>
       <span class="monto ${x.cls}">${x.t}${x.sub ? `<small>${x.sub}</small>` : ''}</span></button>`; }).join('')}</section>
-  <div class="acciones" style="margin-top:16px"><button class="btn primario" data-accion="nuevo-traslado">${ico('traslado')} Traslado o pago de tarjeta</button></div>`
+  <div class="acciones" style="margin-top:16px"><button class="btn primario" data-accion="nuevo-traslado">${ico('traslado')} Traslado o pago de tarjeta</button></div>
+  <div class="acciones" style="margin-top:10px"><button class="btn" data-accion="nueva-cuenta">${ico('mas')} Agregar cuenta o tarjeta</button></div>`
   : `<div class="vacio">${ico('billete')}<div>Activá el saldo en una cuenta o tarjeta y la app lo lleva sola: baja con cada gasto y sube con cada ingreso.</div></div>`}
   ${sin.length ? `<div class="grupo-cat" style="margin-top:22px">Sin saldo</div>
   <section class="pila chica">${sin.map(m => `<button class="movu" data-accion="editar-metodo" data-id="${m.id}">
       <span class="tile">${ico(tipoMetodo(m)[1])}</span>
       <span class="txt"><b>${esc(m.nombre)}</b><small>${tipoMetodo(m)[0]}</small></span>
       <span class="btn chico">Activar</span></button>`).join('')}</section>` : ''}
-  ${S.metodos.length ? '' : `<div class="acciones"><button class="btn primario" data-accion="ir" data-v="metodos">Agregar una cuenta o tarjeta</button></div>`}
+  ${sal.length ? '' : `<div class="acciones" style="margin-top:14px"><button class="btn primario" data-accion="nueva-cuenta">${ico('mas')} Agregar cuenta o tarjeta</button></div>`}
   ${S.traslados.length ? `<div class="cab-mov" style="margin-top:26px"><h3 class="h-mov">Traslados</h3></div>
   <div class="pila chica">${S.traslados.slice(0, 30).map(t => filaMovU({ t: 't', x: t })).join('')}</div>` : ''}
   <p class="nota" style="margin-top:18px">Pagar la tarjeta de crédito es un traslado de tu cuenta a la tarjeta: baja el saldo de una y la deuda de la otra, y no cuenta como gasto porque la compra ya se había contado.${sal.length && sinMetodo ? ` Este mes hay ${sinMetodo} ${sinMetodo === 1 ? 'gasto' : 'gastos'} sin método de pago: no ${sinMetodo === 1 ? 'mueve' : 'mueven'} ningún saldo.` : ''}</p>`;
@@ -551,7 +552,8 @@ function bloqueCuentas() {
   <div class="rollo-cuentas">${sal.map(c => { const x = textoSaldo(c), cred = esCredito(c.m); return `<button class="mini-cuenta" data-accion="ir" data-v="cuentas">
       <span class="mc-top">${ico(tipoMetodo(c.m)[1])}<span>${esc(c.m.nombre)}</span></span>
       <b class="${x.cls}">${x.t}</b>
-      <small>${cred ? (x.sub === 'debés' ? 'Debés' : 'Sin deuda') : 'Disponible'}</small></button>`; }).join('')}</div>`;
+      <small>${cred ? (x.sub === 'debés' ? 'Debés' : 'Sin deuda') : 'Disponible'}</small></button>`; }).join('')}
+    <button class="mini-cuenta nueva" data-accion="nueva-cuenta" aria-label="Agregar cuenta o tarjeta">${ico('mas')}<small>Agregar</small></button></div>`;
 }
 
 // ================= resumen de cierre =================
@@ -1279,7 +1281,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 11`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 12`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1552,7 +1554,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 11</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 12</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1781,15 +1783,15 @@ function hojaSobre(s = null, tipo = null) {
   });
 }
 
-function hojaMetodo(m = null) {
+function hojaMetodo(m = null, pre = {}) {
   const actual = m?.lleva_saldo ? saldos().get(m.id)?.saldo ?? 0 : 0;
   const mostrado = Math.round(Math.abs(actual) * 100) / 100;
-  const f = abrirHoja(m ? 'Editar método' : 'Nuevo método de pago', `
+  const f = abrirHoja(m ? 'Editar método' : pre.saldo ? 'Nueva cuenta o tarjeta' : 'Nuevo método de pago', `
     <div class="campos">
       <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(m?.nombre || '')}" placeholder="Ej. Cuenta de ahorros, Visa…" autofocus></label>
-      <label class="campo"><span>Tipo</span><select name="tipo">${Object.entries(TIPOS_METODO).map(([k, [t]]) => `<option value="${k}" ${(m?.tipo || 'tarjeta') === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label class="campo"><span>Tipo</span><select name="tipo">${Object.entries(TIPOS_METODO).map(([k, [t]]) => `<option value="${k}" ${(m?.tipo || pre.tipo || 'tarjeta') === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label class="campo"><span>Últimos 4</span><input name="ultimos4" inputmode="numeric" maxlength="4" value="${esc(m?.ultimos4 || '')}" placeholder="1234"></label>
-      <label class="campo"><span style="color:var(--tinta)">Llevar el saldo</span><span class="interruptor"><input type="checkbox" name="lleva_saldo" ${m?.lleva_saldo ? 'checked' : ''}><span></span></span></label>
+      <label class="campo"><span style="color:var(--tinta)">Llevar el saldo</span><span class="interruptor"><input type="checkbox" name="lleva_saldo" ${m?.lleva_saldo || pre.saldo ? 'checked' : ''}><span></span></span></label>
       <label class="campo" data-saldo><span data-etq-saldo>Saldo de hoy</span><input name="saldo" inputmode="decimal" value="${mostrado || ''}" placeholder="0"></label>
       <label class="campo" data-saldo><span>Moneda</span><select name="moneda_cta"><option value="CRC" ${m?.moneda !== 'USD' ? 'selected' : ''}>Colones ₡</option><option value="USD" ${m?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>
       <label class="campo" data-saldo data-propia><span style="color:var(--tinta)">Aquí caen mis ingresos</span><span class="interruptor"><input type="checkbox" name="principal" ${(m ? m.principal : !cuentaPrincipal()) ? 'checked' : ''}><span></span></span></label>
@@ -2308,6 +2310,7 @@ async function accion(el) {
       render(); toast(el.dataset.nombre + ' agregado'); break;
     case 'editar-metodo': hojaMetodo(metodoDe(id)); break;
     case 'nuevo-traslado': hojaTraslado(); break;
+    case 'nueva-cuenta': hojaMetodo(null, { saldo: true, tipo: 'cuenta' }); break;
     case 'editar-traslado': hojaTraslado(S.traslados.find(x => x.id === id)); break;
     case 'borrar-traslado':
       if (!confirm('¿Borrar este traslado?')) return;
