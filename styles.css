@@ -737,3 +737,8 @@ a.movu { text-decoration: none; color: inherit; }
 .cab-mov .enlace, .chip-moneda, .enlace.sin-raya, .enlace.centro, #hoja .panel-top .redondo { position: relative; }
 .cab-mov .enlace::after, .chip-moneda::after, .enlace.sin-raya::after, .enlace.centro::after, #hoja .panel-top .redondo::after { content: ''; position: absolute; inset: -12px -8px; }
 a.btn { text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+/* ---------- detalle de cuenta ---------- */
+.apagados { opacity: .6; }
+.resultado b.mal { color: var(--mal); } .resultado b.aviso { color: var(--aviso); } .resultado b.bien { color: var(--bien); }
+.top h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

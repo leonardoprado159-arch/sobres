@@ -596,6 +596,46 @@ function hojaUnir(m) {
   });
 }
 
+// Detalle de una cuenta o tarjeta: de dónde sale el saldo o la deuda, y sus movimientos
+function vistaCuentaDet(p) {
+  const m = metodoDe(p.id);
+  if (!m) { S.pila.pop(); return render(); }
+  const c = saldos().get(m.id), cred = esCredito(m), mon = m.moneda || 'CRC';
+  const cab = `${top(m.nombre, { atras: true, derecha: `<button class="redondo" data-accion="editar-metodo" data-id="${m.id}" aria-label="Editar">${ico('ajustes')}</button>` })}`;
+  const mios = [
+    ...S.gastos.filter(g => g.metodo_id === m.id).map(x => ({ t: 'g', x, f: x.fecha, d: (x.estado || 'pagado') === 'pagado' ? -conv(x.monto, x.moneda, mon) : 0 })),
+    ...S.ingresos.filter(i => (i.metodo_id || (cuentaPrincipal()?.id === m.id ? m.id : null)) === m.id).map(x => ({ t: 'i', x, f: x.fecha, d: conv(x.monto, x.moneda, mon) })),
+    ...S.traslados.filter(x => x.origen_id === m.id || x.destino_id === m.id).map(x => ({ t: 't', x, f: x.fecha, d: (x.destino_id === m.id ? 1 : -1) * conv(x.monto, x.moneda, mon) })),
+  ].sort((a, b) => b.f.localeCompare(a.f));
+  if (!c) return `${cab}
+    <div class="resultado"><b>Esta ${cred ? 'tarjeta' : 'cuenta'} no lleva saldo.</b><br><small>Los pagos se anotan, pero no suman a ninguna deuda ni bajan ningún saldo.</small></div>
+    <div class="acciones" style="margin-top:12px"><button class="btn primario" data-accion="editar-metodo" data-id="${m.id}">Activar el saldo</button>${S.metodos.length > 1 ? `<button class="btn" data-accion="unir-metodo" data-id="${m.id}">Unir con otra</button>` : ''}</div>
+    <div class="cab-mov" style="margin-top:26px"><h3 class="h-mov">Movimientos</h3></div>
+    ${listaMovs(mios.slice(0, 100), 'Todavía no hay movimientos con este método.')}`;
+  const cuentan = mios.filter(z => Date.parse(z.f) >= c.desde), antes = mios.filter(z => Date.parse(z.f) < c.desde);
+  const suma = (l, f) => l.filter(f).reduce((a, z) => a + Math.abs(z.d), 0);
+  const ini = Number(m.saldo_inicial) || 0, x = textoSaldo(c), e = estadoTarjeta(c), tc = e ? textoCorte(e) : null;
+  const desde = new Date(c.desde), fechaIni = `${desde.getDate()} ${MESES[desde.getMonth()]}`;
+  // renglones de la cuenta: en la tarjeta suben las compras y bajan los pagos; en la cuenta, al revés
+  const filas = cred
+    ? [[`Deuda al ${fechaIni}`, Math.max(0, -ini), ''], ['Compras', suma(cuentan, z => z.d < 0 && z.t === 'g'), '+'], ['Otros cargos', suma(cuentan, z => z.d < 0 && z.t !== 'g'), '+'], ['Pagos a la tarjeta', suma(cuentan, z => z.d > 0), '−']]
+    : [[`Saldo al ${fechaIni}`, ini, ''], ['Ingresos', suma(cuentan, z => z.d > 0 && z.t === 'i'), '+'], ['Traslados que entraron', suma(cuentan, z => z.d > 0 && z.t === 't'), '+'], ['Gastos', suma(cuentan, z => z.d < 0 && z.t === 'g'), '−'], ['Traslados y pagos que salieron', suma(cuentan, z => z.d < 0 && z.t === 't'), '−']];
+  return `${cab}
+  <div class="destacada"><span class="lado"><small>${cred ? (x.sub === 'debés' ? 'Debés' : x.sub === 'a favor' ? 'A favor' : 'Sin deuda') : 'Disponible'}</small><b class="${x.cls}">${x.t}</b></span>
+    <span class="lado der"><small>${tipoMetodo(m)[0]}</small><b style="font-size:15px;font-weight:600">${m.ultimos4 ? '•••• ' + esc(m.ultimos4) : mon}</b></span></div>
+  ${e ? `<div class="resultado" style="margin-top:12px"><b class="${tc.cls}">${tc.t}</b>${e.espera ? '' : `<br><small>Va en este corte: ${fmt(e.nuevas, e.mon)} · cierra el ${diaMes(e.prox)}</small>`}</div>`
+    : cred ? `<button class="item punteado" data-accion="editar-metodo" data-id="${m.id}" style="margin-top:12px">${ico('calendario')} Poner día de corte y de pago</button>` : ''}
+  <div class="titulo" style="margin-top:22px">De dónde sale</div>
+  <div class="campos">${filas.filter((f, i) => i === 0 || f[1] > 0).map(f => `<div class="campo"><span>${f[0]}</span><b style="margin-left:auto;font-weight:600">${f[2]}${fmt(f[1], mon)}</b></div>`).join('')}
+    <div class="campo"><span style="color:var(--tinta);font-weight:700">${cred ? 'Deuda de hoy' : 'Saldo de hoy'}</span><b class="${x.cls}" style="margin-left:auto;font-weight:700">${x.t}</b></div></div>
+  <div class="acciones" style="margin-top:14px"><button class="btn primario" data-accion="${cred ? 'pagar-tarjeta' : 'nuevo-traslado'}" data-id="${m.id}">${ico('traslado')} ${cred ? 'Registrar un pago' : 'Traslado'}</button></div>
+  <div class="cab-mov" style="margin-top:26px"><h3 class="h-mov">Movimientos</h3><span class="nota" style="margin:0">${cuentan.length}</span></div>
+  ${listaMovs(cuentan.slice(0, 150), `Desde el ${fechaIni} no hay movimientos con ${cred ? 'esta tarjeta' : 'esta cuenta'}.`)}
+  ${antes.length ? `<div class="cab-mov" style="margin-top:26px"><h3 class="h-mov">Antes del ${fechaIni}</h3></div>
+  <p class="nota" style="margin:-6px 4px 10px">No cambian ${cred ? 'la deuda' : 'el saldo'}: ${cred ? 'la deuda' : 'el saldo'} que anotaste ese día ya los incluía.</p>
+  <div class="apagados">${listaMovs(antes.slice(0, 60))}</div>` : ''}`;
+}
+
 function vistaCuentas() {
   const mv = S.cfg.moneda_vista, sal = [...saldos().values()];
   const tengo = sal.filter(c => !esCredito(c.m)).reduce((a, c) => a + conv(c.saldo, c.m.moneda || 'CRC', mv), 0);
@@ -610,16 +650,16 @@ function vistaCuentas() {
   ${sal.length ? `<div class="destacada"><span class="lado"><small>Tenés</small><b class="${tengo < 0 ? 'mal' : ''}">${tengo < 0 ? '−' : ''}${fmt(Math.abs(tengo), mv)}</b></span>
     ${hayCredito ? `<span class="lado der"><small>Debés en tarjetas</small><b class="${debo > 0 ? 'mal' : ''}">${fmt(debo, mv)}</b></span>` : ''}</div>
   <div class="separador"></div>
-  <section class="pila chica">${sal.map(c => { const x = textoSaldo(c), e = estadoTarjeta(c), tc = e ? textoCorte(e) : null; return `<button class="movu ${esCredito(c.m) ? 'alta' : ''}" data-accion="editar-metodo" data-id="${c.m.id}">
+  <section class="pila chica">${sal.map(c => { const x = textoSaldo(c), e = estadoTarjeta(c), tc = e ? textoCorte(e) : null; return `<button class="movu ${esCredito(c.m) ? 'alta' : ''}" data-accion="ver-cuenta" data-id="${c.m.id}">
       <span class="tile">${ico(tipoMetodo(c.m)[1])}</span>
       <span class="txt"><b>${esc(c.m.nombre)}</b><small>${tipoMetodo(c.m)[0]}${pr && pr.id === c.m.id ? ' · recibe tus ingresos' : ''}</small></span>
       <span class="monto ${x.cls}">${x.t}${x.sub ? `<small>${x.sub}</small>` : ''}</span>
-      ${e ? `<span class="pie-corte"><span class="${tc.cls}">${tc.t}</span>${e.espera ? '' : `<span>Va en este corte: ${fmt(e.nuevas, e.mon)} · cierra el ${diaMes(e.prox)}</span>`}</span>` : esCredito(c.m) ? '<span class="pie-corte"><span>Tocá para poner el día de corte y de pago</span></span>' : ''}</button>`; }).join('')}</section>
+      ${e ? `<span class="pie-corte"><span class="${tc.cls}">${tc.t}</span>${e.espera ? '' : `<span>Va en este corte: ${fmt(e.nuevas, e.mon)} · cierra el ${diaMes(e.prox)}</span>`}</span>` : esCredito(c.m) ? '<span class="pie-corte"><span>Tocá para ver el detalle y poner corte y pago</span></span>' : ''}</button>`; }).join('')}</section>
   <div class="acciones" style="margin-top:16px"><button class="btn primario" data-accion="nuevo-traslado">${ico('traslado')} Traslado o pago de tarjeta</button></div>
   <div class="acciones" style="margin-top:10px"><button class="btn" data-accion="nueva-cuenta">${ico('mas')} Agregar cuenta o tarjeta</button></div>`
   : `<div class="vacio">${ico('billete')}<div>Activá el saldo en una cuenta o tarjeta y la app lo lleva sola: baja con cada gasto y sube con cada ingreso.</div></div>`}
   ${sin.length ? `<div class="grupo-cat" style="margin-top:22px">Sin saldo</div>
-  <section class="pila chica">${sin.map(m => `<button class="movu" data-accion="editar-metodo" data-id="${m.id}">
+  <section class="pila chica">${sin.map(m => `<button class="movu" data-accion="ver-cuenta" data-id="${m.id}">
       <span class="tile">${ico(tipoMetodo(m)[1])}</span>
       <span class="txt"><b>${esc(m.nombre)}</b><small>${tipoMetodo(m)[0]}</small></span>
       <span class="btn chico">Activar</span></button>`).join('')}</section>` : ''}
@@ -695,7 +735,7 @@ function bloqueCuentas() {
   if (!sal.length) return '';
   // una tarjetita por cuenta; con muchas se desliza de lado
   return `<div class="cab-mov" style="margin-top:22px"><h3 class="h-mov">Cuentas</h3><button class="enlace sin-raya" data-accion="ir" data-v="cuentas">Ver todas</button></div>
-  <div class="rollo-cuentas">${sal.map(c => { const x = textoSaldo(c), cred = esCredito(c.m); return `<button class="mini-cuenta" data-accion="ir" data-v="cuentas">
+  <div class="rollo-cuentas">${sal.map(c => { const x = textoSaldo(c), cred = esCredito(c.m); return `<button class="mini-cuenta" data-accion="ver-cuenta" data-id="${c.m.id}">
       <span class="mc-top">${ico(tipoMetodo(c.m)[1])}<span>${esc(c.m.nombre)}</span></span>
       <b class="${x.cls}">${x.t}</b>
       <small>${cred ? (x.sub === 'debés' ? 'Debés' : 'Sin deuda') : 'Disponible'}${(() => { const e = cred ? estadoTarjeta(c) : null; return e && e.porPagar > 0 && e.pago ? ' · pago ' + diaMes(e.pago) : ''; })()}</small></button>`; }).join('')}
@@ -1491,7 +1531,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 24`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 25`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1776,7 +1816,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 24</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 25</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1785,7 +1825,7 @@ const VISTAS = {
   suscripciones: vistaSuscripciones, ajustes: vistaAjustes, fijos: vistaFijos, catcfg: vistaCatCfg, grupos: vistaGrupos, cuentas: vistaCuentas, resumen: vistaResumen,
   sobre: vistaSobre, movimientos: vistaMovimientos, sinsobre: vistaSinSobre, historial: vistaHistorialGeneral,
   cuenta: vistaCuenta, monedas: vistaMonedas, metodos: vistaMetodos, reinicio: vistaReinicio, applepay: vistaApplePay,
-  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, importar: vistaImportar, notificaciones: vistaNotificaciones, guia: vistaGuia, respaldos: vistaRespaldos, acerca: vistaAcerca, descargas: vistaDescargas,
+  avisos: vistaAvisos, personalizacion: vistaPersonalizacion, bloqueo: vistaBloqueo, importar: vistaImportar, notificaciones: vistaNotificaciones, guia: vistaGuia, respaldos: vistaRespaldos, cuentadet: vistaCuentaDet, acerca: vistaAcerca, descargas: vistaDescargas,
 };
 const TABS = [['inicio', 'casa', 'Inicio'], ['sobres', 'carrito', 'Categorías'], ['ahorros', 'alcancia', 'Ahorros'], ['est', 'barras', 'Análisis'], ['movs', 'buscar', 'Buscar']];
 
@@ -2823,6 +2863,8 @@ async function accion(el) {
       S.metodos.push(await api.insertar('metodos_pago', { nombre: el.dataset.nombre, tipo: el.dataset.tipo, ultimos4: null, sobre_id: null, orden: S.metodos.length }));
       render(); toast(el.dataset.nombre + ' agregado'); break;
     case 'editar-metodo': hojaMetodo(metodoDe(id)); break;
+    case 'ver-cuenta': ir('cuentadet', { id }); break;
+    case 'pagar-tarjeta': hojaTraslado(null, { destino_id: id, nota: 'Pago de tarjeta' }); break;
     case 'nuevo-traslado': hojaTraslado(); break;
     case 'nueva-cuenta': hojaMetodo(null, { saldo: true, tipo: 'cuenta' }); break;
     case 'editar-traslado': hojaTraslado(S.traslados.find(x => x.id === id)); break;
