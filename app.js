@@ -374,6 +374,8 @@ function vistaInicio() {
     seguro = `<button class="tarjeta-seguro vacia" data-accion="nuevo-ingreso">
       <div class="ts-top"><span class="tile ing">${ico('monedas')}</span><b>Registrá tu ingreso</b>${ico('derecha', 'fin')}</div>
       <p>Con tus ingresos del mes la app calcula cuánto podés gastar por día.</p></button>`;
+  } else if (b.seguro >= 0 && !(b.porPagar > 0)) {
+    seguro = '';   // sería repetir el disponible: lo de "por día" va dentro del cuadro principal
   } else if (b.seguro >= 0) {
     seguro = `<section class="tarjeta-seguro">
       <div class="ts-top"><span class="tile ing">${ico('efectivo')}</span><b>Seguro para gastar</b></div>
@@ -396,7 +398,7 @@ function vistaInicio() {
   ${b.hayIngresos ? `  <section class="tarjeta-balance">
     <div class="tb-top"><span>Balance disponible</span><button class="chip-moneda oscuro" data-accion="cambiar-moneda" aria-label="Cambiar moneda">${mv} ${ico('abajo')}</button></div>
     <div class="tb-monto">${conSigno(b.disp, mv, b.disp < 0 ? '−' : '') || fmt(0, mv)}</div>
-    <div class="tb-pct"><span>Disponible</span><span>${Math.round(pct * 100)}%</span></div>
+    <div class="tb-pct"><span>${b.disp > 0 && !(b.porPagar > 0) ? `${fmt(b.disp / b.dias, mv)} por día · ${b.dias} ${b.dias === 1 ? 'día' : 'días'}` : 'Disponible'}</span><span>${Math.round(pct * 100)}%</span></div>
     <div class="tb-barra"><span style="width:${(pct * 100).toFixed(1)}%"></span></div>
     <div class="tb-dos">
       <div><small>${ico('sube')} Ingresos</small><b>${conSigno(b.ing, mv, '+') || fmt(0, mv)}</b></div>
@@ -1636,7 +1638,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 26`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 27`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1921,7 +1923,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 26</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 27</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
