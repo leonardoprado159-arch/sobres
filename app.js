@@ -1446,7 +1446,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 22`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 23`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1731,7 +1731,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 22</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 23</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -2269,7 +2269,31 @@ function vistaDescargas() {
     <button class="fila" data-accion="informe">${ico('recibo')}<span class="txt"><b>Informe en PDF</b><small>Totales, tabla por categoría y detalle de gastos</small></span>${ico('descargar', 'fin')}</button>
     <button class="fila" data-accion="exportar">${ico('copiar')}<span class="txt"><b>CSV</b><small>Solo los gastos, en una tabla</small></span>${ico('descargar', 'fin')}</button>
   </div>
-  <p class="nota">Para el PDF se abre la ventana de impresión: en el iPhone tocá Compartir → Guardar en Archivos.</p>`;
+  <p class="nota">Cada descarga arma el archivo y te lo entrega con el menú Compartir del teléfono, para guardarlo en Archivos o mandarlo.</p>`;
+}
+
+// ================= entregar archivos (PDF, Excel, CSV) =================
+// En el iPhone, y más con la app en la pantalla de inicio, "descargar" e "imprimir" muchas veces no hacen nada.
+// El archivo se arma aquí y se entrega con el menú Compartir del teléfono (Guardar en Archivos, AirDrop, correo…),
+// desde un botón que la persona toca: así el teléfono siempre lo permite.
+function entregarArchivo(blob, nombre, tipo) {
+  const archivo = new File([blob], nombre, { type: tipo });
+  const url = URL.createObjectURL(blob);
+  setTimeout(() => URL.revokeObjectURL(url), 10 * 60e3);
+  let comparte = false;
+  try { comparte = !!(navigator.canShare && navigator.canShare({ files: [archivo] })); } catch { /* no hay menú Compartir */ }
+  const f = abrirHoja('Archivo listo', `
+    <p class="nota" style="text-align:center;margin:0 0 16px"><b style="color:var(--tinta)">${esc(nombre)}</b><br>${MB(blob.size)}</p>
+    <div class="pila chica">
+      ${comparte ? `<button type="button" class="btn primario" data-compartir>${ico('descargar')} Guardar o compartir</button>` : ''}
+      <a class="btn ${comparte ? '' : 'primario'}" href="${url}" download="${esc(nombre)}">${comparte ? 'Descargar directo' : ico('descargar') + ' Descargar'}</a>
+    </div>
+    <p class="nota" style="margin-top:14px">${comparte ? 'Con "Guardar o compartir" elegís dónde dejarlo: Archivos, iCloud, AirDrop, correo o WhatsApp.' : 'El archivo queda en la carpeta de descargas.'}</p>`);
+  const b = f.querySelector('[data-compartir]');
+  if (b) b.addEventListener('click', async () => {
+    try { await navigator.share({ files: [archivo], title: nombre }); cerrarHoja(); }
+    catch (e) { if (e.name !== 'AbortError') toast('No se pudo abrir Compartir; probá "Descargar directo"', 4000); }
+  });
 }
 
 function exportar() {
@@ -2278,10 +2302,7 @@ function exportar() {
   for (const g of gastosRango(r)) filas.push([g.fecha.slice(0, 16).replace('T', ' '), g.comercio || '', g.monto, g.moneda,
     sobreDe(g.sobre_id)?.nombre || '', metodoDe(g.metodo_id)?.nombre || '', FUENTES[g.fuente], /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '']);
   const csv = '﻿' + filas.map(f => f.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = `${NOMBRE_APP} gastos ${r.archivo}.csv`;
-  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  entregarArchivo(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${NOMBRE_APP} gastos ${r.archivo}.csv`, 'text/csv');
 }
 
 // Una fila por mes y categoría, contando solo los gastos dentro del rango
@@ -2524,8 +2545,8 @@ async function descargarExcel() {
     'Gasto fijo': s.nombre, 'Tipo': TIPOS_FIJO[s.tipo] || 'Suscripción', 'Cuotas': s.cuotas ? `${s.cuotas_hechas || 0} de ${s.cuotas}` : '', 'Monto': Number(s.monto), 'Moneda': s.moneda, 'Frecuencia': s.frecuencia,
     'Día de cobro': s.dia_cobro, 'Próximo cobro': proximoCobro(s), 'Categoría': sobreDe(s.sobre_id)?.nombre || '', 'Activa': s.activa ? 'Sí' : 'No',
   })), [22, 12, 8, 12, 12, 14, 18, 8]);
-  X.writeFile(libro, `${NOMBRE_APP} ${r.archivo}.xlsx`, { cellDates: true });
-  toast('Excel descargado');
+  const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  entregarArchivo(new Blob([X.write(libro, { bookType: 'xlsx', type: 'array', cellDates: true })], { type: XLSX_MIME }), `${NOMBRE_APP} ${r.archivo}.xlsx`, XLSX_MIME);
 }
 
 function informe() {
@@ -2562,6 +2583,88 @@ function informe() {
         <td>${esc(sobreDe(g.sobre_id)?.nombre || 'Sin categoría')}</td><td>${esc(metodoDe(g.metodo_id)?.nombre || FUENTES[g.fuente])}</td><td>${fmt(g.monto, g.moneda)}</td></tr>`).join('')}
     </tbody></table>`;
   setTimeout(() => window.print(), 50);
+}
+
+// El informe como archivo PDF. Antes se abría la ventana de impresión, que en el iPhone
+// (sobre todo desde el ícono de la pantalla de inicio) no hace nada.
+function cargarGuion(src, huella) {
+  return new Promise((ok, mal) => {
+    const sc = document.createElement('script');
+    sc.src = src; sc.integrity = huella; sc.crossOrigin = 'anonymous';
+    sc.onload = ok; sc.onerror = () => mal(new Error('no se pudo cargar el generador de PDF (¿sin internet?)'));
+    document.head.appendChild(sc);
+  });
+}
+async function cargarPDF() {
+  if (!window.jspdf) await cargarGuion('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk');
+  if (!window.jspdf.jsPDF.API.autoTable) await cargarGuion('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js', 'sha384-fCAW/rDWORTbQXSiB7mOg0QtQ5c+r0f544y6XoKjuVva0nMBlCpNUjiFeG5iMdS3');
+  return window.jspdf.jsPDF;
+}
+async function informePDF() {
+  toast('Preparando el PDF…');
+  const jsPDF = await cargarPDF();
+  const r = rangoDescarga(), lista = gastosRango(r), mv = S.cfg.moneda_vista;
+  let meses = 0, diasMeses = 0; for (let d = 0; d >= -14; d--) { const c = ciclo(d); if (c.fin > r.desde && c.ini <= r.hasta) { meses++; diasMeses += Math.round((c.fin - c.ini) / 864e5); } }
+  meses = Math.max(1, meses);
+  const filas = S.sobres.map(s => {
+    const g = gastadoSobre(s, lista), pres = Math.round(Number(s.presupuesto) * (perCat(s) === 'semana' ? (diasMeses || 30) / 7 : PER_CAT[perCat(s)][3] * meses) * 100) / 100;
+    return { s, g, pres, conPres: pres > 0, dif: pres - g };
+  }).filter(f => f.g || f.conPres);
+  const totPres = filas.filter(f => f.conPres).reduce((a, f) => a + conv(f.pres, f.s.moneda, mv), 0);
+  const totGast = lista.reduce((a, g) => a + conv(g.monto, g.moneda, mv), 0);
+  const neto = totPres - filas.filter(f => f.conPres).reduce((a, f) => a + conv(f.g, f.s.moneda, mv), 0);
+  // la letra del PDF no trae el signo ₡ ni el menos largo: se usan ¢ y el guion
+  const pf = (n, m) => fmt(n, m).replace('₡', '¢').replace('−', '-');
+  const limpio = (x) => String(x ?? '').replace(/₡/g, '¢').replace(/−/g, '-').replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '').trim();
+  const VERDE = [19, 138, 60], ROJO = [208, 32, 26], GRIS = [107, 107, 107];
+
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const M = 44, ancho = doc.internal.pageSize.getWidth();
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.text('Informe de gastos', M, 58);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...GRIS);
+  doc.text(`Del ${r.texto} · generado el ${new Date().toLocaleDateString('es-CR')}`, M, 76);
+  doc.setTextColor(17, 17, 17);
+
+  const base = { theme: 'plain', margin: { left: M, right: M }, styles: { font: 'helvetica', fontSize: 9, cellPadding: { top: 5, bottom: 5, left: 4, right: 4 }, lineColor: [229, 229, 229], lineWidth: { bottom: 0.5 }, textColor: [17, 17, 17], overflow: 'linebreak' },
+    headStyles: { fontStyle: 'bold', textColor: GRIS, lineColor: [17, 17, 17], lineWidth: { bottom: 1 } } };
+  const derechas = (cols) => ({ columnStyles: Object.fromEntries(cols.map(c => [c, { halign: 'right' }])),
+    didParseCell: (d) => { if (d.section === 'head' && cols.includes(d.column.index)) d.cell.styles.halign = 'right'; } });
+  const titulo = (txt, y) => { doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(17, 17, 17); doc.text(txt, M, y); };
+  const sigue = (alto = 60) => { let y = doc.lastAutoTable.finalY + 26; if (y + alto > doc.internal.pageSize.getHeight() - 50) { doc.addPage(); y = 58; } return y; };
+
+  // cifras de arriba
+  doc.autoTable({ ...base, startY: 92, styles: { ...base.styles, lineWidth: 0, fontSize: 9, cellPadding: { top: 2, bottom: 2, left: 4, right: 4 } },
+    body: [[`Límites${meses > 1 ? ` (${meses} meses)` : ' del mes'}`, 'Gastado', neto < 0 ? 'Sobregiro' : 'Sobrante'], [pf(totPres, mv), pf(totGast, mv), pf(Math.abs(neto), mv)]],
+    didParseCell: (d) => { if (d.row.index === 0) d.cell.styles.textColor = GRIS; else { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fontSize = 14; if (d.column.index === 2) d.cell.styles.textColor = neto < 0 ? ROJO : VERDE; } } });
+
+  let y = sigue();
+  titulo('Por categoría', y);
+  const d1 = derechas([1, 2, 3]);
+  doc.autoTable({ ...base, ...d1, startY: y + 8,
+    head: [['Categoría', `Límite${meses > 1 ? ` (${meses} meses)` : ' del mes'}`, 'Gastado', 'Sobrante / sobregiro']],
+    body: filas.map(f => [limpio(f.s.nombre), f.conPres ? pf(f.pres, f.s.moneda) : '—', pf(f.g, f.s.moneda), f.conPres ? pf(f.dif, f.s.moneda) : '—']),
+    didParseCell: (d) => { d1.didParseCell(d); if (d.section === 'body' && d.column.index === 3 && filas[d.row.index]?.conPres) d.cell.styles.textColor = filas[d.row.index].dif < 0 ? ROJO : VERDE; } });
+
+  if (S.ahorros.length) {
+    y = sigue();
+    titulo('Metas de ahorro', y);
+    doc.autoTable({ ...base, ...derechas([1, 2, 3]), startY: y + 8, head: [['Ahorro', 'Meta', 'Ahorrado', 'Avance']],
+      body: S.ahorros.map(a => [limpio(a.nombre), a.meta > 0 ? pf(a.meta, a.moneda) : '—', pf(a.ahorrado, a.moneda), a.meta > 0 ? Math.round(a.ahorrado / a.meta * 100) + '%' : '—']) });
+  }
+
+  y = sigue(80);
+  titulo(`Detalle de gastos (${lista.length})`, y);
+  doc.autoTable({ ...base, ...derechas([4]), startY: y + 8, head: [['Fecha', 'Comercio', 'Categoría', 'Método', 'Monto']],
+    columnStyles: { 0: { cellWidth: 52 }, 4: { halign: 'right', cellWidth: 78 } },
+    body: [...lista].reverse().map(g => [new Date(g.fecha).toLocaleDateString('es-CR', { day: 'numeric', month: 'short' }), limpio(g.comercio || ''),
+      limpio(sobreDe(g.sobre_id)?.nombre || 'Sin categoría'), limpio(metodoDe(g.metodo_id)?.nombre || FUENTES[g.fuente]), pf(g.monto, g.moneda)]) });
+
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) {
+    doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...GRIS);
+    doc.text(`${NOMBRE_APP} · página ${i} de ${n}`, ancho - M, doc.internal.pageSize.getHeight() - 26, { align: 'right' });
+  }
+  entregarArchivo(doc.output('blob'), `${NOMBRE_APP} informe ${r.archivo}.pdf`, 'application/pdf');
 }
 
 function leerAvisoPegado() {
@@ -2662,7 +2765,10 @@ async function accion(el) {
     case 'guia-ocultar': guiaGuardar({ oculta: true }); render(); toast('Los encontrás otra vez en Configuración → Primeros pasos', 4000); break;
     case 'probar-aviso': { const d = await llamarAvisos({ accion: 'probar' }); toast(d.ok ? 'Aviso enviado: debería llegar en unos segundos' : 'No se envió: ' + (d.motivo || 'error'), 5000); break; }
     case 'imp-todos': { const n = S.imp.filas.filter(x => !x.entra && !x.ya), todos = n.every(x => x.sel); n.forEach(x => { x.sel = !todos; }); render(); break; }
-    case 'informe': informe(); break;
+    case 'informe':
+      try { await informePDF(); }
+      catch (err) { toast('No se pudo armar el PDF: ' + err.message + '. Se abre la impresión.', 5000); informe(); }
+      break;
     case 'editar-gasto': hojaGasto(S.gastos.find(g => g.id === id)); break;
     case 'editar-sub': hojaSub(S.subs.find(s => s.id === id)); break;
     case 'a-cuotas': hojaCuotas(S.gastos.find(g => g.id === id)); break;

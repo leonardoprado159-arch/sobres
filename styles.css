@@ -736,3 +736,4 @@ a.movu { text-decoration: none; color: inherit; }
 /* ---------- zona de toque más grande en los enlaces y botones chicos (no cambia cómo se ven) ---------- */
 .cab-mov .enlace, .chip-moneda, .enlace.sin-raya, .enlace.centro, #hoja .panel-top .redondo { position: relative; }
 .cab-mov .enlace::after, .chip-moneda::after, .enlace.sin-raya::after, .enlace.centro::after, #hoja .panel-top .redondo::after { content: ''; position: absolute; inset: -12px -8px; }
+a.btn { text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; }
