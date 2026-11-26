@@ -1454,11 +1454,10 @@ async function catDeudas() {
 function listaDeudas() {
   const mv = S.cfg.moneda_vista, vivas = S.deudas.filter(d => faltaDeuda(d) > 0), listas = S.deudas.filter(d => faltaDeuda(d) <= 0);
   const debo = vivas.reduce((a, d) => a + conv(faltaDeuda(d), d.moneda, mv), 0), pagado = S.deudas.reduce((a, d) => a + conv(Number(d.pagado) || 0, d.moneda, mv), 0);
-  const fila = (d) => { const x = textoPlanDeuda(d), f = faltaDeuda(d); return `<button class="item ${x ? 'con-pie' : ''}" data-accion="abonar-deuda" data-id="${d.id}">
+  const fila = (d) => { const f = faltaDeuda(d); return `<button class="item" data-accion="abonar-deuda" data-id="${d.id}">
       ${anillo(Number(d.pagado || 0) / Number(d.monto), f <= 0 ? '' : Number(d.pagado) > 0 ? '' : 'neutro', f <= 0 ? 'check' : 'recibo')}
       <span class="nombre">${esc(d.nombre)}<small>${d.acreedor ? esc(d.acreedor) + ' · ' : ''}de ${fmt(d.monto, d.moneda)}</small></span>
-      <span class="valor"><b class="${f > 0 ? 'mal' : 'bien'}">${fmt(f, d.moneda)}</b><span>${f > 0 ? 'por pagar' : 'pagada'}</span></span>
-      ${x ? `<span class="pie-corte"><span class="${x.cls}">${x.t}</span></span>` : ''}</button>`; };
+      <span class="valor"><b class="${f > 0 ? 'mal' : 'bien'}">${fmt(f, d.moneda)}</b><span>${f > 0 ? 'por pagar' : 'pagada'}</span></span></button>`; };
   return `${S.deudas.length ? `<div class="destacada" style="margin-bottom:12px"><span class="lado"><small>Debés</small><b class="${debo > 0 ? 'mal' : ''}">${fmt(debo, mv)}</b></span>
       <span class="lado der"><small>Ya pagaste</small><b>${fmt(pagado, mv)}</b></span></div>` : ''}
   <section class="pila">${vivas.map(fila).join('')}
@@ -1541,11 +1540,10 @@ function vistaAhorros() {
     <button class="${deu ? '' : 'activo'}" data-accion="ah-tab" data-valor="ahorros" role="tab" aria-selected="${!deu}">Ahorros</button>
     <button class="${deu ? 'activo' : ''}" data-accion="ah-tab" data-valor="deudas" role="tab" aria-selected="${deu}">Deudas</button></div>
   ${deu ? listaDeudas() : `<section class="pila">
-    ${S.ahorros.map(a => `<button class="item ${a.fecha_meta && a.meta > 0 ? 'con-pie' : ''}" data-accion="mover-ahorro" data-id="${a.id}">
+    ${S.ahorros.map(a => `<button class="item" data-accion="mover-ahorro" data-id="${a.id}">
       ${anillo(a.meta > 0 ? a.ahorrado / a.meta : 0, a.ahorrado > 0 ? '' : 'neutro', a.icono)}
       <span class="nombre">${esc(a.nombre)}${a.meta > 0 ? `<small>Meta ${fmt(a.meta, a.moneda)}</small>` : ''}</span>
-      <span class="valor"><b class="bien">${fmt(a.ahorrado, a.moneda)}</b><span>ahorrados</span></span>
-      ${(() => { const x = textoPlan(a); return x ? `<span class="pie-corte"><span class="${x.cls}">${x.t}</span></span>` : ''; })()}</button>`).join('')}
+      <span class="valor"><b class="bien">${fmt(a.ahorrado, a.moneda)}</b><span>ahorrados</span></span></button>`).join('')}
     ${S.ahorros.length ? '' : `<div class="vacio">${ico('alcancia')}<div>Creá una meta de ahorro con el botón ＋.<br>Le podés poner meta y pasarle el sobrante de tus categorías.</div></div>`}
   </section>`}`;
 }
@@ -1638,7 +1636,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 27`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 28`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1923,7 +1921,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 27</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 28</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
