@@ -50,6 +50,15 @@ const backendDemo = {
     if (fila.id && demo()[tabla].some(r => r.id === fila.id)) { const e = new Error('duplicate key'); e.codigo = '23505'; throw e; }
     demo()[tabla].push(f); persistir(); return structuredClone(f);
   },
+  // unir dos métodos de pago: todo lo de "de" pasa a "a", que se queda con su nombre como alias
+  async unirMetodos(de, a) {
+    const d = demo(), x = d.metodos_pago.find(m => m.id === de), y = d.metodos_pago.find(m => m.id === a);
+    if (!x || !y || de === a) throw new Error('método no encontrado');
+    for (const t of ['gastos', 'ingresos', 'ingresos_fijos', 'suscripciones']) for (const f of d[t]) if (f.metodo_id === de) f.metodo_id = a;
+    for (const f of d.traslados) { if (f.origen_id === de) f.origen_id = a; if (f.destino_id === de) f.destino_id = a; }
+    y.alias = [y.alias, x.nombre, x.alias].filter(Boolean).join('|'); y.ultimos4 ||= x.ultimos4; y.sobre_id ||= x.sobre_id;
+    d.metodos_pago = d.metodos_pago.filter(m => m.id !== de); persistir();
+  },
   async sumar(tabla, id, campo, delta) {
     const f = demo()[tabla].find(r => r.id === id);
     if (!f) return undefined;
@@ -188,6 +197,8 @@ function backendSupabase() {
     async sumar(tabla, id, campo, delta, actual = 0) {
       return conCola({ op: 'sumar', tabla, id, delta }, () => ({ [campo]: Math.max(0, Math.round(((Number(actual) || 0) + delta) * 100) / 100) }));
     },
+    // se hace en la base de un solo golpe; necesita conexión
+    async unirMetodos(de, a) { chk(await sb.rpc('unir_metodos', { p_de: de, p_a: a })); },
     sincronizar, pendientes: () => leerCola().length, vaciarCola: () => guardarCola([]), alEncolar: null,
     atascado: () => (leerCola()[0]?.n || 0) >= 5,   // el primero de la fila ya falló 5 veces por algo que no es la señal
     urlFuncion: CFG.url.replace(/\/$/, '') + '/functions/v1/registrar',

@@ -412,7 +412,7 @@ function vistaInicio() {
     </div>
   </section>`}
   ${seguro}
-  ${bloqueCola()}${bloqueCuentas()}${bloquePagos()}${bloqueResumen()}${bloqueAlertas()}
+  ${bloqueCola()}${bloqueCuentas()}${bloqueSinSumar()}${bloquePagos()}${bloqueResumen()}${bloqueAlertas()}
   ${pendientes ? `<button class="item alerta" data-accion="ir" data-v="sinsobre" style="margin-top:12px">
       ${anillo(1, 'neutro', 'bandeja', 44)}<span class="nombre">${pendientes} ${pendientes === 1 ? 'gasto sin categoría' : 'gastos sin categoría'}<small>Tocá para asignarlos</small></span>${ico('derecha', 'fin')}</button>` : ''}
   ${prox.map(({ s, d }) => `<div class="item alerta" style="margin-top:12px">${anillo(1, 'neutro', 'calendario', 44)}
@@ -552,6 +552,50 @@ function bloquePagos() {
       <span class="nombre">${esc(x.c.m.nombre)}<small>${textoCorte(x.e).t}</small></span>${ico('derecha', 'fin')}</button>`).join('');
 }
 
+// ---------- tarjetas repetidas: la que creó la persona y la que agregó Apple Pay ----------
+const sinEspacios = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// la cuenta con saldo que parece ser la misma tarjeta (un nombre está dentro del otro, o mismos últimos 4)
+function parecidaA(m) {
+  const n = sinEspacios(m.nombre);
+  return cuentas().find(c => c.id !== m.id && ((m.ultimos4 && c.ultimos4 === m.ultimos4) || (n.length >= 4 && (n.includes(sinEspacios(c.nombre)) || sinEspacios(c.nombre).includes(n))))) || null;
+}
+// métodos sin saldo que están recibiendo pagos automáticos: esos pagos no mueven ninguna deuda
+function sinSumar() {
+  if (!cuentas().length) return [];
+  const desde = Date.now() - 60 * 864e5;
+  return S.metodos.filter(m => !m.lleva_saldo && m.tipo !== 'efectivo' && m.tipo !== 'sinpe')
+    .map(m => ({ m, n: S.gastos.filter(g => g.metodo_id === m.id && g.fuente !== 'manual' && Date.parse(g.fecha) >= desde).length, igual: parecidaA(m) }))
+    .filter(x => x.n > 0);
+}
+function bloqueSinSumar(enCuentas = false) {
+  const l = sinSumar();
+  if (!l.length) return '';
+  if (!enCuentas) return `<button class="item alerta" data-accion="ir" data-v="cuentas" style="margin-top:12px">${anillo(1, 'neutro', 'tarjeta', 44)}
+    <span class="nombre">${l.length === 1 ? 'Hay una tarjeta repetida' : `Hay ${l.length} tarjetas repetidas`}<small>Sus pagos no están sumando a la deuda. Tocá para unirlas.</small></span>${ico('derecha', 'fin')}</button>`;
+  return l.map(x => `<div class="item alerta" style="margin-bottom:12px">${anillo(1, 'neutro', 'tarjeta', 44)}
+    <span class="nombre">${esc(x.m.nombre)}<small>${x.n} ${x.n === 1 ? 'pago cayó' : 'pagos cayeron'} aquí y no ${x.n === 1 ? 'suma' : 'suman'} a ninguna deuda.${x.igual ? ` ¿Es la misma que ${esc(x.igual.nombre)}?` : ''}</small></span>
+    <button class="btn chico" data-accion="unir-metodo" data-id="${x.m.id}">Unir</button></div>`).join('');
+}
+function hojaUnir(m) {
+  const otros = S.metodos.filter(x => x.id !== m.id).sort((a, b) => (b.lleva_saldo ? 1 : 0) - (a.lleva_saldo ? 1 : 0));
+  if (!otros.length) { toast('No hay otra tarjeta o cuenta con la cual unirla'); return; }
+  const sug = parecidaA(m)?.id || otros[0].id;
+  const n = S.gastos.filter(g => g.metodo_id === m.id).length;
+  const f = abrirHoja('Unir tarjetas', `
+    <p class="nota" style="margin:0 0 12px">Si <b style="color:var(--tinta)">${esc(m.nombre)}</b> es la misma tarjeta o cuenta que otra que ya tenés, unilas: queda una sola.</p>
+    <div class="campos"><label class="campo"><span>Es la misma que</span><select name="a">${otros.map(x => `<option value="${x.id}" ${x.id === sug ? 'selected' : ''}>${esc(x.nombre)}${x.lleva_saldo ? '' : ' (sin saldo)'}</option>`).join('')}</select></label></div>
+    <p class="nota">${n ? `${n === 1 ? 'Su movimiento pasa' : `Sus ${n} movimientos pasan`} a la que elijás y ` : ''}"${esc(m.nombre)}" desaparece de la lista. Los próximos pagos con Apple Pay que lleguen con ese nombre van a caer directo en la que elijás, y si lleva saldo, van a sumar a la deuda. Los pagos anteriores a la fecha en que pusiste el saldo no lo cambian, porque ya estaban contados en él.</p>
+    <div class="acciones"><button type="submit" class="btn primario">Unir</button></div>`);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const a = S.metodos.find(x => x.id === f.a.value);
+    if (!a) return;
+    if (api.pendientes()) { toast('Hay cambios sin subir: esperá a que se suban y probá de nuevo', 4000); return; }
+    await api.unirMetodos(m.id, a.id);
+    await cargarTodo(); guardarCopia(); cerrarHoja(); render(); toast(`Listo: ahora es una sola, ${a.nombre}`, 4000);
+  });
+}
+
 function vistaCuentas() {
   const mv = S.cfg.moneda_vista, sal = [...saldos().values()];
   const tengo = sal.filter(c => !esCredito(c.m)).reduce((a, c) => a + conv(c.saldo, c.m.moneda || 'CRC', mv), 0);
@@ -562,6 +606,7 @@ function vistaCuentas() {
   const ini = ciclo().ini;
   const sinMetodo = S.gastos.filter(g => !g.metodo_id && (g.estado || 'pagado') === 'pagado' && new Date(g.fecha) >= ini).length;
   return `${top('Cuentas', { atras: true })}
+  ${bloqueSinSumar(true)}
   ${sal.length ? `<div class="destacada"><span class="lado"><small>Tenés</small><b class="${tengo < 0 ? 'mal' : ''}">${tengo < 0 ? '−' : ''}${fmt(Math.abs(tengo), mv)}</b></span>
     ${hayCredito ? `<span class="lado der"><small>Debés en tarjetas</small><b class="${debo > 0 ? 'mal' : ''}">${fmt(debo, mv)}</b></span>` : ''}</div>
   <div class="separador"></div>
@@ -1446,7 +1491,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 23`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 24`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1731,7 +1776,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 23</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 24</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1987,6 +2032,7 @@ function hojaMetodo(m = null, pre = {}) {
     <div class="etiqueta">Al pagar con este método, cargar a</div>${chipsSobre('sobre', m?.sobre_id, 'Lo de Ajustes')}
     <div class="acciones">
       ${m ? `<button type="button" class="btn peligro" data-accion="borrar-metodo" data-id="${m.id}" aria-label="Eliminar método">${ico('basura')}</button>` : ''}
+      ${m && S.metodos.length > 1 ? `<button type="button" class="btn" data-accion="unir-metodo" data-id="${m.id}">Unir con otra</button>` : ''}
       <button type="submit" class="btn primario">Guardar</button>
     </div>`);
   const acomodar = () => {
@@ -2822,6 +2868,7 @@ async function accion(el) {
     case 'borrar-sub':
       if (!confirm('¿Eliminar este gasto fijo? Lo que ya se registró se queda.')) return;
       await api.borrar('suscripciones', id); S.subs = S.subs.filter(s => s.id !== id); cerrarHoja(); render(); break;
+    case 'unir-metodo': hojaUnir(S.metodos.find(m => m.id === id)); break;
     case 'borrar-metodo':
       if (!confirm('¿Eliminar este método de pago?')) return;
       await api.borrar('metodos_pago', id); S.metodos = S.metodos.filter(m => m.id !== id); cerrarHoja(); render(); break;
