@@ -53,7 +53,7 @@ function formatoVivo(valor, tecla) {
 
 // ================= estado =================
 const S = {
-  cfg: null, sobres: [], metodos: [], gastos: [], reglas: [], subs: [], ahorros: [], usuario: null,
+  cfg: null, sobres: [], metodos: [], gastos: [], reglas: [], subs: [], ahorros: [], deudas: [], ahTab: 'ahorros', usuario: null,
   ingresos: [], fijos: [], traslados: [], catsIng: [], archivadas: [], catTab: 'gasto', mov: { filtro: 'todo', q: '' }, est: { per: 'mes', d: 0, sel: 5 },
   tab: 'inicio', pila: [],
 };
@@ -66,8 +66,8 @@ async function cargarTodo() {
   // Si todavía queda algo por subir, lo del servidor está atrasado: no se reemplaza lo local (se perderían
   // esos cambios de la pantalla y los cobros automáticos se anotarían dos veces). Se reintenta después.
   if (api.pendientes()) throw new Error('quedan cambios por subir');
-  const [config, sobres, metodos, gastos, reglas, subs, ahorros, ingresos, fijos, traslados] = await Promise.all(
-    ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos', 'traslados'].map(t => api.listar(t)));
+  const [config, sobres, metodos, gastos, reglas, subs, ahorros, ingresos, fijos, traslados, deudas] = await Promise.all(
+    ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos', 'traslados', 'deudas'].map(t => api.listar(t)));
   S.cfg = config[0];
   if (S.cfg.dia_cierre !== 1) {
     S.cfg.dia_cierre = 1;
@@ -80,7 +80,7 @@ async function cargarTodo() {
   S.catsIng = vivas.filter(s => s.tipo === 'ingreso');             // categorías de ingreso
   S.metodos = metodos.sort(orden);
   S.gastos = gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
-  S.reglas = reglas; S.subs = subs; S.ahorros = ahorros.sort(orden);
+  S.reglas = reglas; S.subs = subs; S.ahorros = ahorros.sort(orden); S.deudas = deudas.sort(orden);
   S.ingresos = ingresos.sort((a, b) => b.fecha.localeCompare(a.fecha)); S.fijos = fijos;
   S.traslados = traslados.sort((a, b) => b.fecha.localeCompare(a.fecha));
   aplicarTema();
@@ -1430,17 +1430,122 @@ function textoPlan(a) {
   return pl.atraso > 0 ? { t: `${base} · vas ${fmt(pl.atraso, a.moneda)} atrás`, cls: 'aviso' } : { t: `${base} · vas al día`, cls: 'bien' };
 }
 
+// ================= deudas =================
+// Préstamos y plata que se le debe a alguien: se anota cuánto era y se va abonando hasta llegar a cero.
+// Las tarjetas de crédito no van aquí: se llevan en Cuentas, con su corte y su pago.
+const faltaDeuda = (d) => Math.max(0, Math.round((Number(d.monto) - Number(d.pagado || 0)) * 100) / 100);
+// el plan de una deuda es el de una meta de ahorro mirado al revés: lo pagado es lo "ahorrado"
+const planDeuda = (d) => planAhorro({ meta: d.monto, ahorrado: d.pagado, fecha_meta: d.fecha_limite, plan_desde: d.plan_desde, plan_base: d.plan_base, creado: d.creado });
+function textoPlanDeuda(d) {
+  if (faltaDeuda(d) <= 0) return { t: 'Deuda pagada', cls: 'bien' };
+  const pl = planDeuda(d);
+  if (!pl) return d.dia_pago ? { t: `Toca abonar el día ${d.dia_pago} de cada mes`, cls: '' } : null;
+  if (pl.vencida) return { t: `La fecha ya pasó · faltan ${fmt(pl.falta, d.moneda)}`, cls: 'mal' };
+  const base = `Aboná ${fmt(pl.porQuincena, d.moneda)} por quincena hasta ${MESES[pl.fin.getMonth()]} ${pl.fin.getFullYear()}`;
+  return pl.atraso > 0 ? { t: `${base} · vas ${fmt(pl.atraso, d.moneda)} atrás`, cls: 'aviso' } : { t: `${base} · vas al día`, cls: 'bien' };
+}
+async function catDeudas() {
+  let s = S.sobres.find(x => sinTildes(x.nombre) === 'pago de deudas');
+  if (!s) { s = await api.insertar('sobres', { nombre: 'Pago de deudas', icono: 'recibo', grupo: null, tipo: 'gasto', presupuesto: 0, moneda: 'CRC', orden: S.sobres.length + S.catsIng.length }); S.sobres.push(s); }
+  return s;
+}
+function listaDeudas() {
+  const mv = S.cfg.moneda_vista, vivas = S.deudas.filter(d => faltaDeuda(d) > 0), listas = S.deudas.filter(d => faltaDeuda(d) <= 0);
+  const debo = vivas.reduce((a, d) => a + conv(faltaDeuda(d), d.moneda, mv), 0), pagado = S.deudas.reduce((a, d) => a + conv(Number(d.pagado) || 0, d.moneda, mv), 0);
+  const fila = (d) => { const x = textoPlanDeuda(d), f = faltaDeuda(d); return `<button class="item ${x ? 'con-pie' : ''}" data-accion="abonar-deuda" data-id="${d.id}">
+      ${anillo(Number(d.pagado || 0) / Number(d.monto), f <= 0 ? '' : Number(d.pagado) > 0 ? '' : 'neutro', f <= 0 ? 'check' : 'recibo')}
+      <span class="nombre">${esc(d.nombre)}<small>${d.acreedor ? esc(d.acreedor) + ' · ' : ''}de ${fmt(d.monto, d.moneda)}</small></span>
+      <span class="valor"><b class="${f > 0 ? 'mal' : 'bien'}">${fmt(f, d.moneda)}</b><span>${f > 0 ? 'por pagar' : 'pagada'}</span></span>
+      ${x ? `<span class="pie-corte"><span class="${x.cls}">${x.t}</span></span>` : ''}</button>`; };
+  return `${S.deudas.length ? `<div class="destacada" style="margin-bottom:12px"><span class="lado"><small>Debés</small><b class="${debo > 0 ? 'mal' : ''}">${fmt(debo, mv)}</b></span>
+      <span class="lado der"><small>Ya pagaste</small><b>${fmt(pagado, mv)}</b></span></div>` : ''}
+  <section class="pila">${vivas.map(fila).join('')}
+    ${S.deudas.length ? '' : `<div class="vacio">${ico('recibo')}<div>Anotá una deuda con el botón ＋ y andá abonándole.<br>Sirve para préstamos, plata que le debés a alguien o compras financiadas. Las tarjetas de crédito se llevan en Cuentas.</div></div>`}
+  </section>
+  ${listas.length ? `<div class="grupo-cat" style="margin-top:22px">Pagadas</div><section class="pila">${listas.map(fila).join('')}</section>` : ''}`;
+}
+function hojaDeuda(d = null) {
+  const f = abrirHoja(d ? 'Editar deuda' : 'Nueva deuda', `
+    <div class="campos">
+      <label class="campo"><span>Nombre</span><input name="nombre" value="${esc(d?.nombre || '')}" placeholder="Préstamo, moto, plata de…" autofocus autocomplete="off"></label>
+      <label class="campo"><span>A quién</span><input name="acreedor" value="${esc(d?.acreedor || '')}" placeholder="Opcional" autocomplete="off"></label>
+      <label class="campo"><span>Cuánto era</span><input name="monto" inputmode="decimal" value="${d?.monto || ''}" placeholder="0"></label>
+      <label class="campo"><span>Ya pagado</span><input name="pagado" data-monto inputmode="decimal" value="${d && Number(d.pagado) > 0 ? d.pagado : ''}" placeholder="0"></label>
+      <label class="campo"><span>Moneda</span><select name="moneda"><option value="CRC">Colones ₡</option><option value="USD" ${d?.moneda === 'USD' ? 'selected' : ''}>Dólares $</option></select></label>
+      <label class="campo"><span>Para cuándo</span><input type="date" name="fecha_limite" value="${d?.fecha_limite || ''}"></label>
+      <label class="campo"><span>Día de pago</span><input name="dia_pago" inputmode="numeric" maxlength="2" value="${d?.dia_pago || ''}" placeholder="Opcional, del 1 al 31"></label>
+    </div>
+    <p class="nota">Con "Para cuándo" la app te dice cuánto abonar por quincena y si vas al día. Con "Día de pago" te avisa el día antes. "Ya pagado" se cambia solo con cada abono; tocalo aquí solo para corregirlo.</p>
+    <div class="acciones">
+      ${d ? `<button type="button" class="btn peligro" data-accion="borrar-deuda" data-id="${d.id}" aria-label="Eliminar deuda">${ico('basura')}</button>` : ''}
+      <button type="submit" class="btn primario">Guardar</button>
+    </div>`);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nombre = f.nombre.value.trim(), monto = leerMontoCampo(f.monto.value), pagado = leerMontoCampo(f.pagado.value);
+    if (!nombre) { f.nombre.classList.add('mal-campo'); f.nombre.focus(); return; }
+    if (!monto) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
+    if (pagado > monto) { f.pagado.classList.add('mal-campo'); f.pagado.focus(); toast('Lo pagado no puede ser más que la deuda'); return; }
+    const dia = parseInt(f.dia_pago.value, 10);
+    if (f.dia_pago.value.trim() && !(dia >= 1 && dia <= 31)) { f.dia_pago.classList.add('mal-campo'); f.dia_pago.focus(); toast('El día va del 1 al 31'); return; }
+    const fila = { nombre, acreedor: f.acreedor.value.trim() || null, monto, pagado, moneda: f.moneda.value, fecha_limite: f.fecha_limite.value || null, dia_pago: dia >= 1 && dia <= 31 ? dia : null };
+    // si cambia el monto o la fecha, el plan arranca de hoy con lo que ya va pagado
+    if (!d || Number(d.monto) !== monto || (d.fecha_limite || null) !== fila.fecha_limite || !d.plan_desde) { fila.plan_desde = aISO(new Date()); fila.plan_base = pagado; }
+    if (d) Object.assign(d, await api.actualizar('deudas', d.id, fila));
+    else S.deudas.push(await api.insertar('deudas', { ...fila, orden: S.deudas.length }));
+    cerrarHoja(); render(); toast('Deuda guardada');
+  });
+}
+function hojaAbono(d) {
+  const falta = faltaDeuda(d), pl = planDeuda(d), x = textoPlanDeuda(d);
+  const sug = pl && pl.porQuincena ? Math.min(falta, Math.round(pl.porQuincena * 100) / 100) : '';
+  const ctas = cuentas().filter(m => !esCredito(m)), pr = cuentaPrincipal()?.id || '';
+  const abonos = S.gastos.filter(g => g.nota === 'deuda:' + d.id);
+  const f = abrirHoja(d.nombre, `
+    <p class="nota" style="text-align:center;margin:0 0 4px">${falta > 0 ? `Faltan <b class="mal">${fmt(falta, d.moneda)}</b> de ${fmt(d.monto, d.moneda)}` : `<b class="bien">Deuda pagada</b> · ${fmt(d.monto, d.moneda)}`}${x && falta > 0 ? `<br><span class="${x.cls}">${x.t}</span>` : ''}</p>
+    ${falta > 0 ? `<div class="monto-grande">
+      <div class="fila-monto"><span class="simbolo">${d.moneda === 'USD' ? '$' : '₡'}</span><input name="monto" inputmode="decimal" placeholder="0" value="${sug}" autofocus aria-label="Monto del abono"></div>
+    </div>
+    ${ctas.length ? `<div class="etiqueta">Sale de</div><div class="chips" role="radiogroup">
+      <label><input type="radio" name="cuenta" value="" ${pr ? '' : 'checked'}><span>Ninguna</span></label>
+      ${ctas.map(m => `<label><input type="radio" name="cuenta" value="${m.id}" ${pr === m.id ? 'checked' : ''}><span>${ico(tipoMetodo(m)[1])}${esc(m.nombre)}</span></label>`).join('')}</div>` : ''}` : ''}
+    ${abonos.length ? `<div class="etiqueta">Abonos (${abonos.length})</div><div class="campos">${abonos.slice(0, 8).map(g => { const fe = new Date(g.fecha); return `<div class="campo"><span>${fe.getDate()} ${MESES[fe.getMonth()]} ${fe.getFullYear()}</span><b style="margin-left:auto;font-weight:600">${fmt(g.monto, g.moneda)}</b></div>`; }).join('')}</div>` : ''}
+    <p class="nota">${falta > 0 ? 'El abono baja la deuda y cuenta como gasto del mes en la categoría "Pago de deudas".' : 'Ya no hay nada que abonar.'}</p>
+    <div class="acciones">
+      <button type="button" class="btn" data-accion="editar-deuda" data-id="${d.id}">Editar</button>
+      ${falta > 0 ? '<button type="submit" class="btn primario">Abonar</button>' : ''}
+    </div>`);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (falta <= 0) return;
+    const monto = leerMontoCampo(f.monto.value);
+    if (!monto) { f.monto.classList.add('mal-campo'); f.monto.focus(); return; }
+    if (monto > falta + 0.004) { f.monto.classList.add('mal-campo'); toast(`Es más de lo que falta (${fmt(falta, d.moneda)})`, 4000); return; }
+    const cat = await catDeudas();
+    S.gastos.push(await api.insertar('gastos', { sobre_id: cat.id, metodo_id: valorRadio(f, 'cuenta') || null, monto, moneda: d.moneda, comercio: 'Abono: ' + d.nombre,
+      fuente: 'manual', estado: 'pagado', fecha: new Date().toISOString(), nota: 'deuda:' + d.id }));
+    S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    Object.assign(d, await api.sumar('deudas', d.id, 'pagado', monto, d.pagado));
+    cerrarHoja(); render();
+    toast(faltaDeuda(d) <= 0 ? `Deuda pagada: ${d.nombre}` : `Abonaste ${fmt(monto, d.moneda)} · faltan ${fmt(faltaDeuda(d), d.moneda)}`, 4000);
+  });
+}
+
 function vistaAhorros() {
+  const deu = S.ahTab === 'deudas';
   return `
-  ${top('Ahorros')}
-  <section class="pila">
+  ${top(deu ? 'Deudas' : 'Ahorros')}
+  <div class="segmento desliza" style="--n:2;--i:${deu ? 1 : 0};margin-bottom:14px" role="tablist"><span class="pill"></span>
+    <button class="${deu ? '' : 'activo'}" data-accion="ah-tab" data-valor="ahorros" role="tab" aria-selected="${!deu}">Ahorros</button>
+    <button class="${deu ? 'activo' : ''}" data-accion="ah-tab" data-valor="deudas" role="tab" aria-selected="${deu}">Deudas</button></div>
+  ${deu ? listaDeudas() : `<section class="pila">
     ${S.ahorros.map(a => `<button class="item ${a.fecha_meta && a.meta > 0 ? 'con-pie' : ''}" data-accion="mover-ahorro" data-id="${a.id}">
       ${anillo(a.meta > 0 ? a.ahorrado / a.meta : 0, a.ahorrado > 0 ? '' : 'neutro', a.icono)}
       <span class="nombre">${esc(a.nombre)}${a.meta > 0 ? `<small>Meta ${fmt(a.meta, a.moneda)}</small>` : ''}</span>
       <span class="valor"><b class="bien">${fmt(a.ahorrado, a.moneda)}</b><span>ahorrados</span></span>
       ${(() => { const x = textoPlan(a); return x ? `<span class="pie-corte"><span class="${x.cls}">${x.t}</span></span>` : ''; })()}</button>`).join('')}
     ${S.ahorros.length ? '' : `<div class="vacio">${ico('alcancia')}<div>Creá una meta de ahorro con el botón ＋.<br>Le podés poner meta y pasarle el sobrante de tus categorías.</div></div>`}
-  </section>`;
+  </section>`}`;
 }
 
 const TIPOS_FIJO = { suscripcion: 'Suscripción', fijo: 'Gasto fijo', cuotas: 'Tasa cero' };
@@ -1531,7 +1636,7 @@ function vistaAjustes() {
 
   <div class="titulo">Acerca</div>
   <div class="grupo">
-    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 25`, 'acerca')}
+    ${filaCfg('info', 's-otros', 'Acerca de', `${NOMBRE_APP} · versión 26`, 'acerca')}
   </div>
   ${modoDemo ? '' : `<div class="grupo" style="margin-top:22px"><button class="fila peligro" data-accion="salir">Cerrar sesión</button></div>`}`;
 }
@@ -1816,7 +1921,7 @@ function vistaPersonalizacion() {
 }
 
 const vistaAcerca = () => `${top('Acerca de', { atras: true })}
-  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 25</small></span></div></div>
+  <div class="grupo sin-icono"><div class="fila"><span class="txt"><b>${NOMBRE_APP}</b><small>Presupuesto personal por categorías · versión 26</small></span></div></div>
   <p class="nota">Tus datos se guardan en tu propia base de datos. Nadie más tiene acceso.</p>`;
 
 // ================= render =================
@@ -1929,14 +2034,14 @@ function hojaGasto(g = null, pre = {}) {
     <div class="campos" style="margin-top:14px">
       <label class="campo"><span>Comercio</span><input name="comercio" value="${esc(base.comercio || '')}" placeholder="Opcional" list="comercios" autocomplete="off"></label>
       <label class="campo"><span>Fecha</span><input type="datetime-local" name="fecha" value="${local}"></label>
-      <label class="campo"><span>Nota</span><input name="nota" value="${esc(/^(sub|ahorro):/.test(base.nota || '') ? '' : base.nota || '')}" placeholder="Opcional"></label>
+      <label class="campo"><span>Nota</span><input name="nota" value="${esc(/^(sub|ahorro|deuda):/.test(base.nota || '') ? '' : base.nota || '')}" placeholder="Opcional"></label>
       ${g ? '' : `<label class="campo"><span>Cuotas</span><select name="cuotas"><option value="">De contado</option>${[3, 6, 10, 12, 18, 24].map(n => `<option value="${n}">${n} cuotas sin intereses</option>`).join('')}</select></label>`}
-      ${/^(sub|ahorro):/.test(base.nota || '') ? '' : `<label class="campo"><span>Repetir</span><select name="repetir"><option value="">No se repite</option><option value="semanal">Cada semana</option><option value="bisemanal">Cada 2 semanas</option><option value="mensual">Cada mes</option></select></label>`}
+      ${/^(sub|ahorro|deuda):/.test(base.nota || '') ? '' : `<label class="campo"><span>Repetir</span><select name="repetir"><option value="">No se repite</option><option value="semanal">Cada semana</option><option value="bisemanal">Cada 2 semanas</option><option value="mensual">Cada mes</option></select></label>`}
       ${automatico && g.comercio ? `<label class="campo"><span style="color:var(--tinta)">Recordar categoría para este comercio</span><span class="interruptor"><input type="checkbox" name="recordar" checked><span></span></span></label>` : ''}
     </div>
     <datalist id="comercios">${[...new Set(S.gastos.map(x => x.comercio).filter(Boolean))].slice(0, 80).map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     ${automatico ? `<p class="nota">Registrado por ${FUENTES[g.fuente]}${g.tarjeta ? ' · tarjeta •••• ' + esc(g.tarjeta) : ''}</p>` : ''}
-    ${g && !/^(sub|ahorro):/.test(g.nota || '') ? `<div class="botones-resumen" style="margin-top:14px"><button type="button" class="btn chico gris" data-accion="a-cuotas" data-id="${g.id}">${ico('tarjeta')} Pasar a cuotas (tasa cero)</button>
+    ${g && !/^(sub|ahorro|deuda):/.test(g.nota || '') ? `<div class="botones-resumen" style="margin-top:14px"><button type="button" class="btn chico gris" data-accion="a-cuotas" data-id="${g.id}">${ico('tarjeta')} Pasar a cuotas (tasa cero)</button>
       ${cuentas().length ? `<button type="button" class="btn chico gris" data-accion="gasto-a-traslado" data-id="${g.id}">${ico('traslado')} Es pago de tarjeta o traslado</button>` : ''}</div>` : ''}
     <div class="acciones">
       ${g ? `<button type="button" class="btn peligro" data-accion="borrar-gasto" data-id="${g.id}" aria-label="Borrar gasto">${ico('basura')}</button>` : ''}
@@ -1960,10 +2065,16 @@ function hojaGasto(g = null, pre = {}) {
       sobre_id: valorRadio(f, 'sobre') || null, metodo_id: valorRadio(f, 'metodo') || null, estado: valorRadio(f, 'estado') || 'pagado',
       fecha: new Date(f.fecha.value || Date.now()).toISOString(),
     };
-    if (!g || !/^(sub|ahorro):/.test(g.nota || '')) fila.nota = f.nota.value.trim() || null;
+    if (!g || !/^(sub|ahorro|deuda):/.test(g.nota || '')) fila.nota = f.nota.value.trim() || null;
     const cat = sobreDe(fila.sobre_id), lim = cat ? Number(cat.presupuesto) || 0 : 0;
     const antes = lim ? gastadoPer(cat) / lim : 0;
+    const viejo = g ? { monto: g.monto, moneda: g.moneda } : null;
     if (g) Object.assign(g, await api.actualizar('gastos', g.id, fila));
+    if (g && /^(deuda|ahorro):/.test(g.nota || '')) {
+      const esD = g.nota.startsWith('deuda:'), obj = (esD ? S.deudas : S.ahorros).find(x => x.id === g.nota.slice(esD ? 6 : 7));
+      const dif = obj ? Math.round((conv(fila.monto, fila.moneda, obj.moneda) - conv(viejo.monto, viejo.moneda, obj.moneda)) * 100) / 100 : 0;
+      if (dif) Object.assign(obj, await api.sumar(esD ? 'deudas' : 'ahorros', obj.id, esD ? 'pagado' : 'ahorrado', dif, esD ? obj.pagado : obj.ahorrado));
+    }
     let creado = null;
     if (!g) S.gastos.push(creado = await api.insertar('gastos', { ...fila, fuente: pre.fuente || 'manual', tarjeta: pre.tarjeta || null }));
     S.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -2386,7 +2497,7 @@ function exportar() {
   const r = rangoDescarga();
   const filas = [['fecha', 'comercio', 'monto', 'moneda', 'categoria', 'metodo', 'origen', 'nota']];
   for (const g of gastosRango(r)) filas.push([g.fecha.slice(0, 16).replace('T', ' '), g.comercio || '', g.monto, g.moneda,
-    sobreDe(g.sobre_id)?.nombre || '', metodoDe(g.metodo_id)?.nombre || '', FUENTES[g.fuente], /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '']);
+    sobreDe(g.sobre_id)?.nombre || '', metodoDe(g.metodo_id)?.nombre || '', FUENTES[g.fuente], /^(sub|ahorro|deuda):/.test(g.nota || '') ? '' : g.nota || '']);
   const csv = '﻿' + filas.map(f => f.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
   entregarArchivo(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${NOMBRE_APP} gastos ${r.archivo}.csv`, 'text/csv');
 }
@@ -2603,7 +2714,7 @@ async function descargarExcel() {
       'Fecha': new Date(g.fecha), 'Comercio': g.comercio || '', 'Monto': Number(g.monto), 'Moneda': g.moneda,
       'Monto en moneda de la categoría': s ? Math.round(conv(g.monto, g.moneda, s.moneda) * 100) / 100 : null,
       'Categoría': s?.nombre || 'Sin categoría', 'Método de pago': metodoDe(g.metodo_id)?.nombre || '', 'Tarjeta': g.tarjeta || '',
-      'Origen': FUENTES[g.fuente] || g.fuente, 'Estado': g.estado || 'pagado', 'Nota': /^(sub|ahorro):/.test(g.nota || '') ? '' : g.nota || '',
+      'Origen': FUENTES[g.fuente] || g.fuente, 'Estado': g.estado || 'pagado', 'Nota': /^(sub|ahorro|deuda):/.test(g.nota || '') ? '' : g.nota || '',
     };
   }), [18, 26, 14, 8, 30, 36, 22, 8, 14, 12, 24]);
   hoja('Ingresos', S.ingresos.filter(i => { const f = new Date(i.fecha); return f >= r.desde && f <= r.hasta; }).map(i => ({
@@ -2621,6 +2732,8 @@ async function descargarExcel() {
     'Cuenta': c.m.nombre, 'Tipo': tipoMetodo(c.m)[0], 'Moneda': c.m.moneda || 'CRC',
     'Saldo hoy': Math.round(c.saldo * 100) / 100, 'Lleva saldo desde': c.m.saldo_fecha ? new Date(c.m.saldo_fecha) : null,
   })), [26, 20, 8, 16, 18]);
+  hoja('Deudas', S.deudas.map(d => ({ 'Deuda': d.nombre, 'A quién': d.acreedor || '', 'Moneda': d.moneda, 'Monto': Number(d.monto), 'Pagado': Number(d.pagado) || 0,
+    'Falta': faltaDeuda(d), 'Para cuándo': d.fecha_limite ? deISO(d.fecha_limite) : null, 'Día de pago': d.dia_pago || null })), [28, 22, 8, 14, 14, 14, 14, 12]);
   hoja('Categorías', [...S.sobres, ...S.catsIng].map(s => ({ 'Categoría': s.nombre, 'Tipo': s.tipo === 'ingreso' ? 'Ingreso' : 'Gasto', 'Grupo': s.grupo || '', 'Moneda': s.moneda,
     'Límite': s.presupuesto > 0 ? Number(s.presupuesto) : null, 'Período del límite': s.presupuesto > 0 ? PER_CAT[perCat(s)][0] : '' })), [34, 10, 22, 8, 14, 18]);
   hoja('Ahorros', S.ahorros.map(a => ({
@@ -2816,7 +2929,7 @@ async function accion(el) {
     case 'menu-sobre': $('#menu') ? cerrarMenu() : abrirMenuSobre(sobreDe(id)); break;
     case 'nuevo': {
       const v = vistaActual().v;
-      if (v === 'ahorros') hojaAhorro(); else if (v === 'suscripciones') hojaSub(); else if (v === 'fijos') hojaFijo(); else if (v === 'cuentas' && cuentas().length) hojaTraslado(); else hojaGasto();
+      if (v === 'ahorros') (S.ahTab === 'deudas' ? hojaDeuda() : hojaAhorro()); else if (v === 'suscripciones') hojaSub(); else if (v === 'fijos') hojaFijo(); else if (v === 'cuentas' && cuentas().length) hojaTraslado(); else hojaGasto();
       break;
     }
     case 'nuevo-sobre': hojaSobre(); break;
@@ -2895,6 +3008,8 @@ async function accion(el) {
       { // si era plata apartada para una meta de ahorro, la meta baja en ese monto
         const g = S.gastos.find(x => x.id === id), a = g && /^ahorro:/.test(g.nota || '') ? S.ahorros.find(x => x.id === g.nota.slice(7)) : null;
         await api.borrar('gastos', id); S.gastos = S.gastos.filter(x => x.id !== id);
+        const de = g && /^deuda:/.test(g.nota || '') ? S.deudas.find(x => x.id === g.nota.slice(6)) : null;
+        if (de) Object.assign(de, await api.sumar('deudas', de.id, 'pagado', -Math.round(conv(g.monto, g.moneda, de.moneda) * 100) / 100, de.pagado));
         if (a) Object.assign(a, await api.sumar('ahorros', a.id, 'ahorrado', -Math.round(conv(g.monto, g.moneda, a.moneda) * 100) / 100, a.ahorrado));
         cerrarHoja(); render(); toast(a ? `Gasto borrado · ${a.nombre} bajó ${fmt(conv(g.monto, g.moneda, a.moneda), a.moneda)}` : 'Gasto borrado');
       }
@@ -2914,6 +3029,12 @@ async function accion(el) {
     case 'borrar-metodo':
       if (!confirm('¿Eliminar este método de pago?')) return;
       await api.borrar('metodos_pago', id); S.metodos = S.metodos.filter(m => m.id !== id); cerrarHoja(); render(); break;
+    case 'ah-tab': S.ahTab = el.dataset.valor === 'deudas' ? 'deudas' : 'ahorros'; render(); break;
+    case 'abonar-deuda': hojaAbono(S.deudas.find(x => x.id === id)); break;
+    case 'editar-deuda': hojaDeuda(S.deudas.find(x => x.id === id)); break;
+    case 'borrar-deuda':
+      if (!confirm('¿Eliminar esta deuda? Los abonos que ya anotaste quedan como gastos.')) return;
+      await api.borrar('deudas', id); S.deudas = S.deudas.filter(x => x.id !== id); cerrarHoja(); render(); toast('Deuda eliminada'); break;
     case 'borrar-ahorro':
       if (!confirm('¿Eliminar este ahorro?')) return;
       await api.borrar('ahorros', id); S.ahorros = S.ahorros.filter(x => x.id !== id); cerrarHoja(); render(); break;
@@ -3245,7 +3366,7 @@ function vistaNotificaciones() {
 
 // Copia local de los datos: la app pinta al instante con lo último que vio y luego se pone al día
 const CLAVE_COPIA = 'whiplash-copia-v1';
-const CAMPOS_COPIA = ['cfg', 'sobres', 'catsIng', 'archivadas', 'metodos', 'gastos', 'reglas', 'subs', 'ahorros', 'ingresos', 'fijos', 'traslados'];
+const CAMPOS_COPIA = ['cfg', 'sobres', 'catsIng', 'archivadas', 'metodos', 'gastos', 'reglas', 'subs', 'ahorros', 'ingresos', 'fijos', 'traslados', 'deudas'];
 function guardarCopia() {
   if (modoDemo || !S.usuario?.id || !S.cfg) return;
   try { localStorage.setItem(CLAVE_COPIA, JSON.stringify({ u: S.usuario.id, d: Object.fromEntries(CAMPOS_COPIA.map(k => [k, S[k]])) })); } catch { /* sin espacio */ }

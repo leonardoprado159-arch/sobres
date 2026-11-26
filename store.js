@@ -17,7 +17,7 @@ const sinRed = (err) => (typeof navigator !== 'undefined' && navigator.onLine ==
 
 // ---------- Demo (localStorage) ----------
 const CLAVE = 'sobres-demo-v2';
-export const TABLAS = ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos', 'traslados'];
+export const TABLAS = ['config', 'sobres', 'metodos_pago', 'gastos', 'reglas_comercio', 'suscripciones', 'ahorros', 'ingresos', 'ingresos_fijos', 'traslados', 'deudas'];
 function leerDemo() {
   try { return JSON.parse(localStorage.getItem(CLAVE)) || null; } catch { return null; }
 }
@@ -63,6 +63,7 @@ const backendDemo = {
     const f = demo()[tabla].find(r => r.id === id);
     if (!f) return undefined;
     f[campo] = Math.max(0, Math.round(((Number(f[campo]) || 0) + delta) * 100) / 100);
+    if (tabla === 'deudas') f[campo] = Math.min(Number(f.monto) || 0, f[campo]);
     if (tabla === 'suscripciones' && f.tipo === 'cuotas' && f.cuotas > 0) f.activa = f[campo] < f.cuotas;
     persistir(); return structuredClone(f);
   },
@@ -100,7 +101,7 @@ function backendSupabase() {
     }
     if (o.op === 'actualizar') return chk(await sb.from(o.tabla).update(o.cambios).eq(o.campo, o.id).select())[0];
     // suma hecha en la base: no pisa lo que otro teléfono haya sumado mientras tanto
-    if (o.op === 'sumar') return (chk(await sb.rpc(o.tabla === 'ahorros' ? 'sumar_ahorro' : 'sumar_cuota', { p_id: o.id, p_delta: o.delta })) || [])[0];
+    if (o.op === 'sumar') return (chk(await sb.rpc({ ahorros: 'sumar_ahorro', suscripciones: 'sumar_cuota', deudas: 'sumar_deuda' }[o.tabla], { p_id: o.id, p_delta: o.delta })) || [])[0];
     chk(await sb.from(o.tabla).delete().eq('id', o.id));
   };
   // Sube lo pendiente en orden. Se detiene si no hay señal, si no hay sesión válida o si el servidor falla
